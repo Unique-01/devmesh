@@ -1,6 +1,6 @@
 # DevMesh CLI
 
-A robust Go-based CLI project scaffolded using Cobra.
+DevMesh is a local development networking CLI that gives projects stable local domains while automatically managing their underlying ports.
 
 ## Project Structure
 
