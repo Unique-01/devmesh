@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -26,18 +27,26 @@ func NewHostsManager(hostsFilePath string) *HostsManager {
 	}
 }
 
-// AddEntry adds a domain mapping (e.g. vault.dev -> 127.0.0.1) into the managed section of /etc/hosts.
-// It preserves unrelated entries, handles duplicates gracefully, and returns an error on permission failure.
+// AddEntry adds a domain mapping (e.g. vault.local.dev -> 127.0.0.1) into the managed section of /etc/hosts.
+// If direct write fails due to permissions, it attempts to use sudo automatically.
 func (hm *HostsManager) AddEntry(domain string, ip string) error {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	if ip == "" {
 		ip = "127.0.0.1"
 	}
 
+	err := hm.writeEntryInternal(domain, ip)
+	if err != nil && os.IsPermission(err) {
+		err = hm.addEntryWithSudo(domain, ip)
+	}
+	return err
+}
+
+func (hm *HostsManager) writeEntryInternal(domain string, ip string) error {
 	content, err := os.ReadFile(hm.hostsFilePath)
 	if err != nil {
 		if os.IsPermission(err) {
-			return fmt.Errorf("permission denied reading %s (try running with sudo or check permissions): %w", hm.hostsFilePath, err)
+			return fmt.Errorf("permission denied reading %s: %w", hm.hostsFilePath, err)
 		}
 		// If file doesn't exist yet, we can create it or treat as empty
 		if !os.IsNotExist(err) {
@@ -115,10 +124,78 @@ func (hm *HostsManager) AddEntry(domain string, ip string) error {
 	return nil
 }
 
+func (hm *HostsManager) addEntryWithSudo(domain string, ip string) error {
+	content, _ := os.ReadFile(hm.hostsFilePath)
+	lines := parseHostsLines(string(content))
+
+	var unrelatedLines []string
+	managedEntries := make(map[string]string)
+	var managedOrder []string
+
+	inManagedBlock := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == devmeshHeaderBegin {
+			inManagedBlock = true
+			continue
+		}
+		if trimmed == devmeshHeaderEnd {
+			inManagedBlock = false
+			continue
+		}
+		if inManagedBlock {
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 2 {
+				entryIP := parts[0]
+				entryDomain := strings.ToLower(parts[1])
+				if managedEntries[entryDomain] == "" {
+					managedOrder = append(managedOrder, entryDomain)
+				}
+				managedEntries[entryDomain] = entryIP
+			}
+		} else {
+			unrelatedLines = append(unrelatedLines, line)
+		}
+	}
+
+	if managedEntries[domain] == "" {
+		managedOrder = append(managedOrder, domain)
+	}
+	managedEntries[domain] = ip
+
+	var newContent bytes.Buffer
+	for _, l := range unrelatedLines {
+		newContent.WriteString(l + "\n")
+	}
+
+	newContent.WriteString(devmeshHeaderBegin + "\n")
+	for _, d := range managedOrder {
+		if targetIP, ok := managedEntries[d]; ok {
+			newContent.WriteString(fmt.Sprintf("%s\t%s\n", targetIP, d))
+		}
+	}
+	newContent.WriteString(devmeshHeaderEnd + "\n")
+
+	cmd := exec.Command("sudo", "tee", hm.hostsFilePath)
+	cmd.Stdin = bytes.NewReader(newContent.Bytes())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to update %s via sudo (exit status %v): %s", hm.hostsFilePath, err, string(out))
+	}
+	return nil
+}
+
 // RemoveEntry removes a domain mapping from the managed section of /etc/hosts.
 func (hm *HostsManager) RemoveEntry(domain string) error {
 	domain = strings.ToLower(strings.TrimSpace(domain))
+	err := hm.removeEntryInternal(domain)
+	if err != nil && os.IsPermission(err) {
+		err = hm.removeEntryWithSudo(domain)
+	}
+	return err
+}
 
+func (hm *HostsManager) removeEntryInternal(domain string) error {
 	content, err := os.ReadFile(hm.hostsFilePath)
 	if err != nil {
 		if os.IsPermission(err) {
@@ -195,6 +272,72 @@ func (hm *HostsManager) RemoveEntry(domain string) error {
 		return fmt.Errorf("failed to write %s: %w", hm.hostsFilePath, err)
 	}
 
+	return nil
+}
+
+func (hm *HostsManager) removeEntryWithSudo(domain string) error {
+	content, _ := os.ReadFile(hm.hostsFilePath)
+	lines := parseHostsLines(string(content))
+
+	var unrelatedLines []string
+	managedEntries := make(map[string]string)
+	var managedOrder []string
+
+	inManagedBlock := false
+	hasManagedBlock := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == devmeshHeaderBegin {
+			inManagedBlock = true
+			hasManagedBlock = true
+			continue
+		}
+		if trimmed == devmeshHeaderEnd {
+			inManagedBlock = false
+			continue
+		}
+		if inManagedBlock {
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 2 {
+				entryIP := parts[0]
+				entryDomain := strings.ToLower(parts[1])
+				if entryDomain != domain {
+					if managedEntries[entryDomain] == "" {
+						managedOrder = append(managedOrder, entryDomain)
+					}
+					managedEntries[entryDomain] = entryIP
+				}
+			}
+		} else {
+			unrelatedLines = append(unrelatedLines, line)
+		}
+	}
+
+	if !hasManagedBlock {
+		return nil
+	}
+
+	var newContent bytes.Buffer
+	for _, l := range unrelatedLines {
+		newContent.WriteString(l + "\n")
+	}
+
+	if len(managedOrder) > 0 {
+		newContent.WriteString(devmeshHeaderBegin + "\n")
+		for _, d := range managedOrder {
+			if targetIP, ok := managedEntries[d]; ok {
+				newContent.WriteString(fmt.Sprintf("%s\t%s\n", targetIP, d))
+			}
+		}
+		newContent.WriteString(devmeshHeaderEnd + "\n")
+	}
+
+	cmd := exec.Command("sudo", "tee", hm.hostsFilePath)
+	cmd.Stdin = bytes.NewReader(newContent.Bytes())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to update %s via sudo (exit status %v): %s", hm.hostsFilePath, err, string(out))
+	}
 	return nil
 }
 
