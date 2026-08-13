@@ -16,13 +16,12 @@ import (
 
 var (
 	proxyAddrFlag string
-	dnsAddrFlag   string
 )
 
 var proxyCmd = &cobra.Command{
 	Use:   "proxy",
-	Short: "Start the DevMesh reverse proxy and DNS resolver daemon",
-	Long:  `Start the DevMesh reverse proxy server (default 127.0.0.1:8080) and local DNS resolver (default 127.0.0.1:53 or fallback port) for zero-config domain resolution without requiring manual port entry or /etc/hosts updates.`,
+	Short: "Start the DevMesh reverse proxy server",
+	Long:  `Start the DevMesh reverse proxy server (default 127.0.0.1:8080) for zero-config domain routing without requiring manual port entry or /etc/hosts updates.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		registry := proxy.NewRouteRegistry()
 
@@ -52,19 +51,6 @@ var proxyCmd = &cobra.Command{
 			}
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		// Start DNS server
-		dnsServer := proxy.NewDNSServer(dnsAddrFlag, registry)
-		go func() {
-			fmt.Printf("Starting DevMesh local DNS server on %s (resolving *.local.dev / *.dev -> 127.0.0.1)\n", dnsAddrFlag)
-			if err := dnsServer.Start(ctx); err != nil {
-				fmt.Fprintf(os.Stderr, "DNS server stopped or failed (note: port 53 requires root/sudo, or try --dns 127.0.0.1:5353): %v\n", err)
-			}
-		}()
-		defer dnsServer.Close()
-
 		// Start Reverse Proxy server
 		proxyServer := proxy.NewServer(proxyAddrFlag, registry)
 		fmt.Printf("Starting DevMesh reverse proxy server on %s\n", proxyAddrFlag)
@@ -81,8 +67,7 @@ var proxyCmd = &cobra.Command{
 
 		select {
 		case sig := <-sigChan:
-			fmt.Printf("Received signal %v, shutting down DevMesh proxy & DNS...\n", sig)
-			cancel()
+			fmt.Printf("Received signal %v, shutting down DevMesh proxy...\n", sig)
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer shutdownCancel()
 			_ = proxyServer.Shutdown(shutdownCtx)
@@ -96,6 +81,5 @@ var proxyCmd = &cobra.Command{
 
 func init() {
 	proxyCmd.Flags().StringVar(&proxyAddrFlag, "addr", "127.0.0.1:8080", "Proxy listen address")
-	proxyCmd.Flags().StringVar(&dnsAddrFlag, "dns", "127.0.0.1:53", "DNS listen address (use e.g. 127.0.0.1:5353 if port 53 is restricted)")
 	rootCmd.AddCommand(proxyCmd)
 }

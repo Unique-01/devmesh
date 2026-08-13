@@ -1,6 +1,6 @@
 # DevMesh CLI
 
-DevMesh is a powerful local development networking and proxy CLI that gives your projects stable local domains (such as `http://ume.local.dev` or `http://vault.local.dev`) without requiring you to manually type port numbers (e.g. `:35443`). DevMesh runs a centralized reverse proxy on a fixed local port (defaulting to `:8080`, or `:80`/`:443` with privilege) along with automatic DNS resolution via `/etc/hosts` and local DNS, dynamic port allocation, and automated process lifecycle management.
+DevMesh is a powerful local development networking and proxy CLI that gives your projects stable local domains (such as `http://ume.local.dev` or `http://vault.local.dev`) without requiring you to manually type port numbers (e.g. `:35443`). DevMesh runs a centralized reverse proxy on a fixed local port (defaulting to `:8080`, or `:80`/`:443` with privilege) along with automatic domain resolution via `/etc/hosts` + sudo, dynamic port allocation, and automated process lifecycle management.
 
 ---
 
@@ -89,7 +89,7 @@ devmesh down
 - `cmd/devmesh/`: CLI entrypoint (`main.go`).
 - `internal/cli/`: Cobra commands (`up`, `proxy`, `ps`, `down`, `version`, etc.).
 - `internal/hosts.go`: Safe `/etc/hosts` manager with sudo support.
-- `proxy/`: HTTP reverse proxy server, route registry, and lightweight DNS resolver.
+- `proxy/`: HTTP reverse proxy server and route registry.
 - `internal/process/`: Process manager with environment port injection and lifecycle tracking.
 
 ---
