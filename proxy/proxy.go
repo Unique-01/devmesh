@@ -44,6 +44,7 @@ func NewProxyHandler(registry *RouteRegistry, transport *http.Transport) http.Ha
 			},
 		}
 
+		// Ensure WebSocket upgrades are properly handled (automatic in httputil.ReverseProxy 1.12+)
 		proxy.ServeHTTP(w, r)
 	})
 }

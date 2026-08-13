@@ -100,7 +100,7 @@ func (hm *HostsManager) writeEntryInternal(domain string, ip string) error {
 	// Reconstruct file content
 	var newContent bytes.Buffer
 	for _, l := range unrelatedLines {
-		newContent.WriteString(l + "\n")
+		newContent.WriteString(l);newContent.WriteString("\n")
 	}
 
 	// Append managed block
@@ -165,7 +165,7 @@ func (hm *HostsManager) addEntryWithSudo(domain string, ip string) error {
 
 	var newContent bytes.Buffer
 	for _, l := range unrelatedLines {
-		newContent.WriteString(l + "\n")
+		newContent.WriteString(l);newContent.WriteString("\n")
 	}
 
 	newContent.WriteString(devmeshHeaderBegin + "\n")
@@ -250,7 +250,7 @@ func (hm *HostsManager) removeEntryInternal(domain string) error {
 
 	var newContent bytes.Buffer
 	for _, l := range unrelatedLines {
-		newContent.WriteString(l + "\n")
+		newContent.WriteString(l);newContent.WriteString("\n")
 	}
 
 	// If there are still managed entries, write block back
@@ -319,7 +319,7 @@ func (hm *HostsManager) removeEntryWithSudo(domain string) error {
 
 	var newContent bytes.Buffer
 	for _, l := range unrelatedLines {
-		newContent.WriteString(l + "\n")
+		newContent.WriteString(l);newContent.WriteString("\n")
 	}
 
 	if len(managedOrder) > 0 {

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -17,51 +18,31 @@ var statusCmd = &cobra.Command{
 	Short: "Show status of devmesh projects",
 	Long:  `Display status of registered devmesh projects across the system, showing project domain, port, PID, and running status.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		states, err := internal.ListAllProjectStates()
-		if err != nil {
-			return fmt.Errorf("failed to list project states: %w", err)
-		}
+		states, _ := internal.ListAllProjectStates()
 
 		fmt.Println("DEV MESH")
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 		fmt.Fprintln(w, "PROJECT\tDOMAIN\tPORT\tPID\tSTATUS")
 		fmt.Fprintln(w, "---------------------------------------------------------")
 
-		if len(states) == 0 {
-			// Also check if current directory has .devmesh.yaml
-			if _, err := os.Stat(".devmesh.yaml"); err == nil {
-				if data, err := os.ReadFile(".devmesh.yaml"); err == nil {
-					if cfg, err := parseConfigYaml(data); err == nil {
-						ident, _ := internal.ResolveIdentity("", "", cfg.Name, cfg.Domain)
-						portStr := "—"
-						if cfg.Port > 0 {
-							portStr = fmt.Sprintf("%d", cfg.Port)
-						}
-						fmt.Fprintf(w, "%s\t%s\t%s\t—\t○ stopped\n", ident.Name, ident.Domain, portStr)
-					}
+		for _, s := range states {
+			running := internal.IsProcessRunning(s.PID)
+			statusStr := "○ stopped"
+			pidStr := "—"
+			portStr := "—"
+			if s.Port > 0 {
+				portStr = fmt.Sprintf("%d", s.Port)
+			}
+			if running {
+				statusStr = "● running"
+				pidStr = fmt.Sprintf("%d", s.PID)
+			} else {
+				if s.PID > 0 {
+					s.PID = 0
+					_ = internal.SaveProjectState(s)
 				}
 			}
-		} else {
-			for _, s := range states {
-				running := internal.IsProcessRunning(s.PID)
-				statusStr := "○ stopped"
-				pidStr := "—"
-				portStr := "—"
-				if s.Port > 0 {
-					portStr = fmt.Sprintf("%d", s.Port)
-				}
-				if running {
-					statusStr = "● running"
-					pidStr = fmt.Sprintf("%d", s.PID)
-				} else {
-					// Clean up stale state PID if process is not running
-					if s.PID > 0 {
-						s.PID = 0
-						_ = internal.SaveProjectState(s)
-					}
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Domain, portStr, pidStr, statusStr)
-			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Domain, portStr, pidStr, statusStr)
 		}
 		w.Flush()
 		return nil
@@ -73,28 +54,14 @@ var listCmd = &cobra.Command{
 	Short: "List registered projects",
 	Long:  `Shows all registered devmesh projects found in the system.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		states, err := internal.ListAllProjectStates()
-		if err != nil {
-			return fmt.Errorf("failed to list project states: %w", err)
-		}
+		states, _ := internal.ListAllProjectStates()
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 4, ' ', 0)
 		fmt.Fprintln(w, "PROJECT\tDOMAIN")
 		fmt.Fprintln(w, "-----------------------------")
 
-		if len(states) == 0 {
-			if _, err := os.Stat(".devmesh.yaml"); err == nil {
-				if data, err := os.ReadFile(".devmesh.yaml"); err == nil {
-					if cfg, err := parseConfigYaml(data); err == nil {
-						ident, _ := internal.ResolveIdentity("", "", cfg.Name, cfg.Domain)
-						fmt.Fprintf(w, "%s\t%s\n", ident.Name, ident.Domain)
-					}
-				}
-			}
-		} else {
-			for _, s := range states {
-				fmt.Fprintf(w, "%s\t%s\n", s.Name, s.Domain)
-			}
+		for _, s := range states {
+			fmt.Fprintf(w, "%s\t%s\n", s.Name, s.Domain)
 		}
 		w.Flush()
 		return nil
@@ -131,22 +98,28 @@ var downCmd = &cobra.Command{
 			}
 		}
 
-		// Terminate process if PID is running
+		// Terminate process group if PID is running
 		if state.PID > 0 && internal.IsProcessRunning(state.PID) {
-			fmt.Printf("Stopping process PID %d for project %q...\n", state.PID, ident.Name)
-			proc, err := os.FindProcess(state.PID)
-			if err == nil && proc != nil {
-				_ = proc.Signal(syscall.SIGTERM)
+			fmt.Printf("Stopping process group for project %q...\n", ident.Name)
+			// Use negative PID to signal process group on Unix
+			if runtime.GOOS != "windows" {
+				_ = syscall.Kill(-state.PID, syscall.SIGTERM)
+			} else {
+				proc, err := os.FindProcess(state.PID)
+				if err == nil && proc != nil {
+					_ = proc.Kill()
+				}
 			}
 		}
 
 		// Remove hosts entry
 		hostsMgr := internal.NewHostsManager("")
-		if err := hostsMgr.RemoveEntry(ident.Domain); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove /etc/hosts entry for %s: %v\n", ident.Domain, err)
-		} else {
-			fmt.Printf("Removed /etc/hosts entry for %s\n", ident.Domain)
-		}
+		_ = hostsMgr.RemoveEntry(ident.Domain)
+		fmt.Printf("Removed /etc/hosts entry for %s\n", ident.Domain)
+
+		// Deregister from running proxy if it's up
+		_ = internal.DeregisterRoute("127.0.0.1:80", ident.Domain)
+		_ = internal.DeregisterRoute("127.0.0.1:8080", ident.Domain)
 
 		// Update state: PID = 0, keep config and registration
 		state.PID = 0
@@ -207,7 +180,11 @@ var removeCmd = &cobra.Command{
 		hostsMgr := internal.NewHostsManager("")
 		_ = hostsMgr.RemoveEntry(ident.Domain)
 
-		// 3. Delete .devmesh.yaml
+		// 3. Deregister from running proxy
+		_ = internal.DeregisterRoute("127.0.0.1:80", ident.Domain)
+		_ = internal.DeregisterRoute("127.0.0.1:8080", ident.Domain)
+
+		// 4. Delete .devmesh.yaml
 		if _, err := os.Stat(configPath); err == nil {
 			if err := os.Remove(configPath); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to delete %s: %v\n", configPath, err)

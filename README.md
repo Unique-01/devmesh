@@ -6,11 +6,11 @@ DevMesh is a powerful local development networking and proxy CLI that gives your
 
 ## Features
 
-- **Port-Free Domain Routing**: Access services directly at `http://ume.local.dev` or `http://vault.local.dev` without typing port numbers. Requests hit the DevMesh reverse proxy on its standard local port and are automatically routed to the correct backend service port.
+- **Port-Free Domain Routing**: Access services directly at `http://ume.local.dev` without typing port numbers. DevMesh's proxy daemon auto-starts and routes requests to the correct backend service port.
 - **Stable Local Domains**: Automatic domain generation (e.g., `<project>.local.dev`) or custom domains.
 - **Automatic Port Management**: Assigns and injects the `PORT` environment variable to your development commands.
-- **Zero-Config `/etc/hosts` Setup**: Automatically updates and cleans up `/etc/hosts` entries (`127.0.0.1 ume.local.dev`) securely.
-- **Process Lifecycle Management**: Easily start (`devmesh up`), stop (`devmesh down`), check status (`devmesh ps`), or clean up projects.
+- **Zero-Config `/etc/hosts` Setup**: Automatically updates and cleans up `/etc/hosts` entries securely.
+- **Auto-Daemonization**: The proxy daemon is automatically spawned as a background process when you run `devmesh up`.
 
 ---
 
@@ -32,14 +32,16 @@ go build -o bin/devmesh ./cmd/devmesh
 ## Usage Guide
 
 ### 1. Start the DevMesh Proxy Daemon
+DevMesh now automatically starts the reverse proxy daemon when you run `devmesh up`. 
 
-The DevMesh reverse proxy listens on a standard port (default `127.0.0.1:8080`) to route incoming domain requests to their respective backend services:
+If you prefer to start it manually:
 
 ```bash
 devmesh proxy
 ```
 
-*Note: You can also specify a custom listen address with `--addr`.*
+*Note: DevMesh tries to bind to port 80. If permission is denied, it will automatically fall back to port 8080.*
+
 
 ### 2. Run Your Development Service (`devmesh up`)
 
@@ -66,13 +68,13 @@ devmesh up
 
 Now, visiting **`http://ume.local.dev:8080`** (or directly on `:80`/`:443` if bound to standard HTTP ports) routes seamlessly to your running application without manual port juggling!
 
-### 3. Check Active Services (`devmesh ps`)
-
+### 3. Check Active Services (`devmesh status`)
 View all currently running DevMesh-managed services, their assigned ports, PIDs, and domains:
 
 ```bash
-devmesh ps
+devmesh status
 ```
+
 
 ### 4. Stop Services (`devmesh down`)
 

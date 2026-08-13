@@ -2,9 +2,8 @@ package proxy
 
 import (
 	"context"
-	"net"
+	"encoding/json"
 	"net/http"
-	"time"
 )
 
 // Server represents the HTTP reverse proxy server.
@@ -15,31 +14,52 @@ type Server struct {
 	transport *http.Transport
 }
 
-// NewServer creates a new reverse proxy server.
-func NewServer(addr string, registry *RouteRegistry) *Server {
-	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
-
-	return &Server{
-		addr:      addr,
-		registry:  registry,
-		transport: transport,
+// AdminHandler handles internal devmesh administrative tasks.
+func (s *Server) AdminHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/_devmesh/ping":
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "devmesh-proxy"})
+	case "/_devmesh/routes":
+		if r.Method == http.MethodPost {
+			var req struct {
+				Domain string `json:"domain"`
+				Target string `json:"target"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := s.registry.AddRoute(req.Domain, req.Target); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		} else if r.Method == http.MethodDelete {
+			domain := r.URL.Query().Get("domain")
+			s.registry.RemoveRoute(domain)
+			w.WriteHeader(http.StatusOK)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	default:
+		http.NotFound(w, r)
 	}
 }
 
-// Handler returns the http.Handler for the reverse proxy.
+// NewServer creates a new reverse proxy server.
+func NewServer(addr string, registry *RouteRegistry) *Server {
+	return &Server{
+		addr:      addr,
+		registry:  registry,
+		transport: &http.Transport{Proxy: http.ProxyFromEnvironment},
+	}
+}
 func (s *Server) Handler() http.Handler {
-	return NewProxyHandler(s.registry, s.transport)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/_devmesh/", s.AdminHandler)
+	mux.Handle("/", NewProxyHandler(s.registry, s.transport))
+	return mux
 }
 
 // Start starts the HTTP server.

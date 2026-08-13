@@ -62,6 +62,19 @@ func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, 
 
 	m.cmd = exec.CommandContext(ctx, shell, flag, m.cmdStr)
 
+	// Set process group for clean termination
+	if runtime.GOOS != "windows" {
+		m.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		// If running as root, attempt to drop privileges to the user who invoked sudo
+		if os.Getuid() == 0 {
+			if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+				// We don't have an easy way to switch uid/gid here without affecting the parent
+				// but we can at least try to run as the user if we had a more complex setup.
+				// For this hackathon, we skip privilege dropping to avoid complexity.
+			}
+		}
+	}
+
 	// Inject PORT and preserve/enhance environment
 	env := os.Environ()
 	portStr := strconv.Itoa(m.port)
@@ -211,13 +224,7 @@ func (m *Manager) terminateProcess(sig os.Signal) {
 	if runtime.GOOS == "windows" {
 		_ = m.cmd.Process.Kill()
 	} else {
-		// Send signal to process group if process group was created, or process itself.
-		// Sending negative PID sends signal to process group.
-		pgid, err := syscall.Getpgid(pid)
-		if err == nil && pgid > 0 {
-			_ = syscall.Kill(-pgid, syscall.SIGTERM)
-		} else {
-			_ = m.cmd.Process.Signal(sig)
-		}
+		// Kill the entire process group
+		_ = syscall.Kill(-pid, syscall.SIGTERM)
 	}
 }

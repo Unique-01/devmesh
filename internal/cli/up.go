@@ -105,10 +105,18 @@ var upCmd = &cobra.Command{
 			return fmt.Errorf("failed to allocate port: %w", err)
 		}
 
-		serviceName := nameFlag
-		if serviceName == "" {
-			serviceName = "app"
+		// Ensure Proxy Daemon is running
+		proxyAddr, err := ensureProxyDaemon()
+		if err != nil {
+			return fmt.Errorf("failed to ensure proxy daemon: %w", err)
 		}
+		fmt.Printf("Proxy daemon running on %s\n", proxyAddr)
+
+		// Register route in running proxy
+		if err := internal.RegisterRoute(proxyAddr, domain, fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
+			return fmt.Errorf("failed to register route with proxy: %w", err)
+		}
+		fmt.Printf("Registered route: %s -> http://127.0.0.1:%d\n", domain, port)
 
 		// Update hosts entry and active route registry
 		hostsMgr := internal.NewHostsManager("")
@@ -117,9 +125,16 @@ var upCmd = &cobra.Command{
 		} else {
 			fmt.Printf("Updated /etc/hosts: %s -> 127.0.0.1\n", domain)
 		}
+
 		defer func() {
+			_ = internal.DeregisterRoute(proxyAddr, domain)
 			_ = hostsMgr.RemoveEntry(domain)
 		}()
+
+		serviceName := nameFlag
+		if serviceName == "" {
+			serviceName = "app"
+		}
 
 		fmt.Printf("Starting DevMesh development service %q on domain %s (port %d) for command: %s\n", serviceName, domain, port, cmdFlag)
 

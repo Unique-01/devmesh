@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -18,15 +19,26 @@ type ProjectState struct {
 	Directory string `json:"directory" yaml:"directory"`
 }
 
-// GetDevMeshDir returns the ~/.devmesh directory path.
+// GetDevMeshDir returns the /var/lib/devmesh directory path.
+// It automatically initializes the directory if missing (only when running as root).
 func GetDevMeshDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get user home dir: %w", err)
-	}
-	dir := filepath.Join(home, ".devmesh")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create .devmesh dir: %w", err)
+	// For testing, use a local dir if not root to avoid permissions issues
+	// if os.Geteuid() != 0 {
+	// 	home, _ := os.UserHomeDir()
+	// 	return filepath.Join(home, ".devmesh"), nil
+	// }
+
+	dir := "/var/lib/devmesh"
+	statesDir := filepath.Join(dir, "states")
+	if _, err := os.Stat(statesDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(statesDir, 0755); err != nil {
+			return "", fmt.Errorf("failed to create global state dir: %w", err)
+		}
+		// Chown to SUDO_USER if available
+		sudoUser := os.Getenv("SUDO_USER")
+		if sudoUser != "" {
+			exec.Command("chown", "-R", sudoUser+":"+sudoUser, dir).Run()
+		}
 	}
 	return dir, nil
 }
@@ -55,6 +67,7 @@ func SaveProjectState(state ProjectState) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal project state: %w", err)
 	}
+	// Write with 0644 to ensure readability for the user, even if created as root
 	return os.WriteFile(path, data, 0644)
 }
 
