@@ -43,8 +43,8 @@ func ResolveIdentity(explicitName, explicitDomain, configName, configDomain stri
 		domain = configDomain
 	}
 	if domain == "" {
-		// Default domain is name.dev
-		domain = fmt.Sprintf("%s.dev", name)
+		// Default domain is name.local.dev
+		domain = fmt.Sprintf("%s.local.dev", name)
 	} else {
 		// If domain is provided without TLD or as a short name (e.g. --domain api), ensure it has .dev or use as is if it has a dot.
 		// Wait, prompt says: --domain api.dev or --domain api?

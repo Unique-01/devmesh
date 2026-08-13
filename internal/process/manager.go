@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -60,10 +62,61 @@ func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, 
 
 	m.cmd = exec.CommandContext(ctx, shell, flag, m.cmdStr)
 
-	// Inject PORT and preserve existing environment
+	// Inject PORT and preserve/enhance environment
 	env := os.Environ()
 	portStr := strconv.Itoa(m.port)
 	env = append(env, fmt.Sprintf("PORT=%s", portStr))
+
+	// If running under sudo, ensure PATH includes common user binary locations or SUDO_USER environment
+	hasPath := false
+	for _, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			hasPath = true
+			break
+		}
+	}
+	if !hasPath || os.Getuid() == 0 {
+		// When running as root (e.g. sudo), PATH might be restricted (/usr/sbin:/usr/bin:/sbin:/bin).
+		// Let's ensure common user paths / homebrew / pnpm / nvm / npm paths are included if missing.
+		extraPaths := []string{
+			"/usr/local/bin",
+			"/usr/bin",
+			"/bin",
+			"/usr/sbin",
+			"/sbin",
+		}
+		// If SUDO_USER is set, we can check or guess home directory bin paths
+		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+			extraPaths = append(extraPaths,
+				fmt.Sprintf("/home/%s/.local/bin", sudoUser),
+				fmt.Sprintf("/home/%s/.pnpm", sudoUser),
+				fmt.Sprintf("/home/%s/.npm-global/bin", sudoUser),
+			)
+		}
+		// Also add common npm/pnpm global paths
+		homeDir, err := os.UserHomeDir()
+		if err == nil && homeDir != "" {
+			extraPaths = append(extraPaths,
+				filepath.Join(homeDir, ".local/bin"),
+				filepath.Join(homeDir, ".pnpm"),
+				filepath.Join(homeDir, ".npm-global/bin"),
+			)
+		}
+		// Prepend or append to PATH
+		existingPath := ""
+		for i, e := range env {
+			if strings.HasPrefix(e, "PATH=") {
+				existingPath = strings.TrimPrefix(e, "PATH=")
+				env[i] = fmt.Sprintf("PATH=%s:%s", strings.Join(extraPaths, ":"), existingPath)
+				hasPath = true
+				break
+			}
+		}
+		if !hasPath {
+			env = append(env, fmt.Sprintf("PATH=%s", strings.Join(extraPaths, ":")))
+		}
+	}
+
 	m.cmd.Env = env
 
 	// Forward stdio

@@ -204,7 +204,7 @@ func parseConfigYaml(data []byte) (Config, error) {
 func init() {
 	upCmd.Flags().StringVar(&cmdFlag, "cmd", "", "Development command to run (e.g. \"pnpm dev\")")
 	upCmd.Flags().StringVar(&nameFlag, "name", "", "Service name (e.g. \"vault\")")
-	upCmd.Flags().StringVar(&domainFlag, "domain", "", "Custom domain name (e.g. \"api.dev\")")
+	upCmd.Flags().StringVar(&domainFlag, "domain", "", "Custom domain name (e.g. \"api.local.dev\")")
 	upCmd.Flags().IntVar(&portFlag, "port", 0, "Preferred port number (optional)")
 	rootCmd.AddCommand(upCmd)
 }
