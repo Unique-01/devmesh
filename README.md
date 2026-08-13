@@ -1,102 +1,200 @@
 # DevMesh CLI
 
-DevMesh is a powerful local development networking and proxy CLI that gives your projects stable local domains (such as `http://ume.local.dev` or `http://vault.local.dev`) without requiring you to manually type port numbers (e.g. `:35443`). DevMesh runs a centralized reverse proxy on a fixed local port (defaulting to `:8080`, or `:80`/`:443` with privilege) along with automatic domain resolution via `/etc/hosts` + sudo, dynamic port allocation, and automated process lifecycle management.
+DevMesh is a local development networking CLI that gives your projects stable,
+memorable local domains — like `http://ume.local.dev` or `http://vault.local.dev`
+— instead of having to remember and type `localhost:<random-port>` for every
+microservice you're running.
+
+Under the hood, DevMesh runs a centralized reverse proxy that reads the `Host`
+header of incoming requests and forwards them to the right backend port,
+combined with automatic `/etc/hosts` entries so the domain actually resolves
+on your machine. You start a service once with `devmesh up`, and it's
+reachable by name from then on — no more losing track of which port `vault`
+was running on.
 
 ---
 
-## Features
+## What it does
 
-- **Port-Free Domain Routing**: Access services directly at `http://ume.local.dev` without typing port numbers. DevMesh's proxy daemon auto-starts and routes requests to the correct backend service port.
-- **Stable Local Domains**: Automatic domain generation (e.g., `<project>.local.dev`) or custom domains.
-- **Automatic Port Management**: Assigns and injects the `PORT` environment variable to your development commands.
-- **Zero-Config `/etc/hosts` Setup**: Automatically updates and cleans up `/etc/hosts` entries securely.
-- **Auto-Daemonization**: The proxy daemon is automatically spawned as a background process when you run `devmesh up`.
+- **Named local domains for your services.** `devmesh up --cmd "pnpm dev" --name vault`
+  spins up `vault.local.dev`, pointing at whatever port your dev server actually
+  bound to.
+- **A reverse proxy that auto-starts.** The first `devmesh up` call spawns a
+  background proxy daemon if one isn't already running — you never run a
+  separate "start the proxy" step.
+- **Live route registration.** Every subsequent `devmesh up` (for a different
+  service, or a restart) registers its route with the already-running daemon
+  over a small local admin API, no daemon restart required.
+- **Safe, managed `/etc/hosts` writes.** DevMesh only touches a clearly marked
+  block in `/etc/hosts` and cleans up after itself on `devmesh down`.
+- **Process lifecycle tracking.** `devmesh status` shows you what's running,
+  on what domain, and what PID; `devmesh down` stops it cleanly (whole process
+  group, not just the top-level shell).
 
 ---
 
-## Installation & Building
+## Permissions
+
+Binding a reverse proxy to port 80 and editing `/etc/hosts` both require root.
+You don't need to prefix commands with `sudo` yourself — DevMesh escalates
+internally when it needs to (e.g. for `up`/`down`/`restart`/`remove`) and will
+prompt you for your password at that point. `status` and `list` are read-only
+and never need elevation.
+
+```bash
+devmesh up --cmd "pnpm dev" --name vault   # prompts for password if needed
+devmesh status                              # no prompt, ever
+```
+
+If port 80 isn't available (something else already bound to it, or the
+password prompt is declined), DevMesh falls back to `:8080` and tells you —
+in that case you'll need `vault.local.dev:8080` in the URL bar, since the
+port-free experience specifically depends on being on `:80`.
+
+---
+
+## Installation & building
 
 ### Prerequisites
-
-- Go 1.21 or later installed.
-- Linux / macOS / Windows.
+- Go 1.21+
+- Linux or macOS (Windows support is present but untested — see Known Limitations)
 
 ### Build
-
 ```bash
 go build -o bin/devmesh ./cmd/devmesh
 ```
 
 ---
 
-## Usage Guide
+## Usage
 
-### 1. Start the DevMesh Proxy Daemon
-DevMesh now automatically starts the reverse proxy daemon when you run `devmesh up`. 
-
-If you prefer to start it manually:
+### 1. Start a service
 
 ```bash
-devmesh proxy
+devmesh up --cmd "pnpm dev" --name vault
 ```
 
-*Note: DevMesh tries to bind to port 80. If permission is denied, it will automatically fall back to port 8080.*
+This will:
+1. Allocate a free local port and inject it as the `PORT` env var for your command.
+2. Auto-start the proxy daemon if it isn't already running (tries `:80`, falls back to `:8080`).
+3. Register `vault.local.dev -> 127.0.0.1:<allocated-port>` with the daemon.
+4. Add the domain to `/etc/hosts`.
+5. Run your command in the foreground, streaming its logs directly to your terminal.
 
+Visit `http://vault.local.dev` (or `http://vault.local.dev:8080` if the proxy
+fell back off port 80) — no port to remember or type.
 
-### 2. Run Your Development Service (`devmesh up`)
+### 2. Use a config file instead of flags
 
-In your project directory, start your application with `devmesh up`. DevMesh automatically allocates an available port, injects the `PORT` environment variable, configures the local domain in `/etc/hosts`, and registers the route with the proxy daemon.
-
-```bash
-# Example: Start a web app on port-free domain ume.local.dev
-devmesh up --cmd "python3 -m http.server $PORT" --name ume
-```
-
-Alternatively, if you create a `.devmesh.yaml` in your repository root:
+Running `devmesh up --cmd "..." --name vault` once writes a `.devmesh.yaml`
+in the current directory:
 
 ```yaml
-name: ume
-domain: ume.local.dev
-cmd: "python3 -m http.server $PORT"
+name: vault
+domain: vault.local.dev
+cmd: "pnpm dev"
 ```
 
-You can simply run:
-
+After that, just:
 ```bash
 devmesh up
 ```
 
-Now, visiting **`http://ume.local.dev:8080`** (or directly on `:80`/`:443` if bound to standard HTTP ports) routes seamlessly to your running application without manual port juggling!
-
-### 3. Check Active Services (`devmesh status`)
-View all currently running DevMesh-managed services, their assigned ports, PIDs, and domains:
+### 3. Check what's running
 
 ```bash
-devmesh status
+devmesh status   # detailed: project, domain, port, PID, status
+devmesh list      # just project + domain
 ```
 
+No `sudo` needed for either.
 
-### 4. Stop Services (`devmesh down`)
-
-Stop a running project service and clean up its active routes and `/etc/hosts` entries:
+### 4. Stop a service
 
 ```bash
 devmesh down
 ```
 
+Stops the process (whole process group, so child processes spawned by your
+dev command — e.g. by `pnpm`/`tsx watch` — are actually terminated), removes
+its route from the proxy, and removes its `/etc/hosts` entry.
+`.devmesh.yaml` and saved state are kept, so `devmesh up` works again without
+re-specifying flags.
+
+### 5. Restart or fully remove
+
+```bash
+devmesh restart   # down, then up
+devmesh remove    # down, plus deletes .devmesh.yaml and saved state (asks for confirmation)
+```
+
 ---
 
-## Project Structure
+## What we built with AO
 
-- `cmd/devmesh/`: CLI entrypoint (`main.go`).
-- `internal/cli/`: Cobra commands (`up`, `proxy`, `ps`, `down`, `version`, etc.).
-- `internal/hosts.go`: Safe `/etc/hosts` manager with sudo support.
-- `proxy/`: HTTP reverse proxy server and route registry.
-- `internal/process/`: Process manager with environment port injection and lifecycle tracking.
+Built using an Agent Orchestrator (AO) workflow. I planned out the
+implementation in phases up front, then handed each phase to an orchestrator
+agent, which spawned individual worker agents to build it. I reviewed each
+phase's output, then had the orchestrator merge it in — which signals the
+worker agent and folds the reviewed work into the codebase.
+
+
+## Demo
+
+- **Live demo / video:** _not available_
+- **Repo:** https://github.com/unique-01/devmesh _(update if the repo name differs)_
 
 ---
 
-## Running Tests
+## Project structure
+
+```
+cmd/devmesh/            CLI entrypoint (main.go)
+
+internal/cli/            Cobra commands
+  lifecycle.go/.test      status, list, down, restart, remove
+  up.go/.test              devmesh up
+  proxy.go, proxy_launcher.go/.test   devmesh proxy + auto-start/daemon spawning
+  root.go/.test, version.go
+
+internal/                 core logic shared across commands
+  hosts.go/.test           safe /etc/hosts manager (managed block, sudo fallback)
+  identity.go/.test        project name/domain resolution (flags -> config -> cwd)
+  state.go, state_unix.go, state_windows.go
+                           project state persistence + process-liveness checks
+                           (platform-specific: EPERM/ESRCH handling on unix)
+  daemon_lock.go           file-lock coordination for concurrent daemon startup
+  daemon_wait.go           polling helper for "is the daemon up yet"
+  proxy_client.go          HTTP client for the daemon's admin API
+
+internal/process/         process manager: env (PORT) injection, process-group
+  manager.go/.test          spawning, graceful termination
+
+proxy/                     the reverse proxy itself
+  proxy.go                  Host-header routing / httputil.ReverseProxy handler
+  server.go/.test           HTTP server + admin API (/_devmesh/ping, /_devmesh/routes)
+  registry.go                route table (domain -> target)
+  active_routes.go/.test    live route bookkeeping
+  port.go/.test              dynamic port allocation
+```
+
+---
+
+## Known limitations
+
+- Windows process-liveness checking is currently broken (`os.Signal(0)` is not
+  a valid construction) — Windows build is present but not functional for
+  status checks. Not prioritized for this submission; flagged here rather than
+  left silent.
+- The proxy daemon's admin API (`/_devmesh/routes`) is unauthenticated on
+  `127.0.0.1` — acceptable for a local dev tool, not something to expose
+  beyond localhost.
+- Ports are reallocated randomly on every `devmesh up`, not held sticky per
+  project across restarts.
+
+---
+
+## Running tests
 
 ```bash
 go test ./...
