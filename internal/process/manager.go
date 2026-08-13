@@ -85,22 +85,45 @@ func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, 
 			"/usr/sbin",
 			"/sbin",
 		}
-		// If SUDO_USER is set, we can check or guess home directory bin paths
+		// Also inspect common user binary directories (such as ~/.local/share/pnpm, ~/.nvm, etc.)
+		// If SUDO_USER is set, retrieve home dir of SUDO_USER.
+		var targetHome string
 		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
-			extraPaths = append(extraPaths,
-				fmt.Sprintf("/home/%s/.local/bin", sudoUser),
-				fmt.Sprintf("/home/%s/.pnpm", sudoUser),
-				fmt.Sprintf("/home/%s/.npm-global/bin", sudoUser),
-			)
+			targetHome = fmt.Sprintf("/home/%s", sudoUser)
+			if sudoUser == "root" {
+				targetHome = "/root"
+			}
+		} else {
+			if home, err := os.UserHomeDir(); err == nil && home != "" {
+				targetHome = home
+			}
 		}
-		// Also add common npm/pnpm global paths
-		homeDir, err := os.UserHomeDir()
-		if err == nil && homeDir != "" {
+
+		if targetHome != "" {
 			extraPaths = append(extraPaths,
-				filepath.Join(homeDir, ".local/bin"),
-				filepath.Join(homeDir, ".pnpm"),
-				filepath.Join(homeDir, ".npm-global/bin"),
+				filepath.Join(targetHome, ".local/bin"),
+				filepath.Join(targetHome, ".local/share/pnpm"),
+				filepath.Join(targetHome, ".pnpm"),
+				filepath.Join(targetHome, ".npm-global/bin"),
 			)
+			// Check for nvm node versions directory
+			nvmDir := filepath.Join(targetHome, ".nvm/versions/node")
+			if entries, err := os.ReadDir(nvmDir); err == nil {
+				for _, entry := range entries {
+					if entry.IsDir() {
+						extraPaths = append(extraPaths, filepath.Join(nvmDir, entry.Name(), "bin"))
+					}
+				}
+			}
+		}
+
+		// Also check current process or system paths for any additional bin paths (like /home/unic/.local/share/pnpm/bin, etc.)
+		if origPath := os.Getenv("PATH"); origPath != "" {
+			for _, p := range strings.Split(origPath, ":") {
+				if p != "" {
+					extraPaths = append(extraPaths, p)
+				}
+			}
 		}
 		// Prepend or append to PATH
 		existingPath := ""
