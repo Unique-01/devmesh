@@ -5,10 +5,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
+	"devmesh/internal"
 	"devmesh/internal/process"
 	"devmesh/proxy"
 
@@ -16,16 +16,18 @@ import (
 )
 
 var (
-	cmdFlag  string
-	nameFlag string
-	portFlag int
+	cmdFlag    string
+	nameFlag   string
+	domainFlag string
+	portFlag   int
 )
 
 // Config represents the .devmesh.yaml configuration file format.
 type Config struct {
-	Name string `yaml:"name" json:"name"`
-	Cmd  string `yaml:"cmd" json:"cmd"`
-	Port int    `yaml:"port,omitempty" json:"port,omitempty"`
+	Name   string `yaml:"name" json:"name"`
+	Domain string `yaml:"domain" json:"domain"`
+	Cmd    string `yaml:"cmd" json:"cmd"`
+	Port   int    `yaml:"port,omitempty" json:"port,omitempty"`
 }
 
 var upCmd = &cobra.Command{
@@ -36,40 +38,35 @@ var upCmd = &cobra.Command{
 		configPath := ".devmesh.yaml"
 
 		// 1. If --cmd is provided, create/update .devmesh.yaml automatically.
+		var configName, configDomain string
+		if _, err := os.Stat(configPath); err == nil {
+			if data, err := os.ReadFile(configPath); err == nil {
+				if cfg, err := parseConfigYaml(data); err == nil {
+					configName = cfg.Name
+					configDomain = cfg.Domain
+					if portFlag == 0 && cfg.Port > 0 {
+						portFlag = cfg.Port
+					}
+				}
+			}
+		}
+
+		ident, err := internal.ResolveIdentity(nameFlag, domainFlag, configName, configDomain)
+		if err != nil {
+			return fmt.Errorf("failed to resolve identity: %w", err)
+		}
+		nameFlag = ident.Name
+		domain := ident.Domain
+
 		if cmdFlag != "" {
-			if nameFlag == "" {
-				// If name flag is not provided, check if .devmesh.yaml exists to resolve name and other flags, otherwise use folder root name.
-				if _, err := os.Stat(configPath); err == nil {
-					data, err := os.ReadFile(configPath)
-					if err == nil {
-						if cfg, err := parseConfigYaml(data); err == nil {
-							if cfg.Name != "" {
-								nameFlag = cfg.Name
-							}
-							if portFlag == 0 && cfg.Port > 0 {
-								portFlag = cfg.Port
-							}
-						}
-					}
-				}
-				if nameFlag == "" {
-					cwd, err := os.Getwd()
-					if err == nil {
-						nameFlag = filepath.Base(cwd)
-					}
-					if nameFlag == "" || nameFlag == "." || nameFlag == "/" {
-						nameFlag = "app"
-					}
-				}
-			}
-
 			cfg := Config{
-				Name: nameFlag,
-				Cmd:  cmdFlag,
-				Port: portFlag,
+				Name:   nameFlag,
+				Domain: domain,
+				Cmd:    cmdFlag,
+				Port:   portFlag,
 			}
 
-			yamlContent := fmt.Sprintf("name: %s\ncmd: %q\n", cfg.Name, cfg.Cmd)
+			yamlContent := fmt.Sprintf("name: %s\ndomain: %s\ncmd: %q\n", cfg.Name, cfg.Domain, cfg.Cmd)
 			if cfg.Port > 0 {
 				yamlContent += fmt.Sprintf("port: %d\n", cfg.Port)
 			}
@@ -77,7 +74,7 @@ var upCmd = &cobra.Command{
 			if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
 				return fmt.Errorf("failed to write %s: %w", configPath, err)
 			}
-			fmt.Printf("Created %s configuration for project %q\n", configPath, cfg.Name)
+			fmt.Printf("Created %s configuration for project %q (domain: %s)\n", configPath, cfg.Name, cfg.Domain)
 		} else {
 			// 2. If no --cmd, check if .devmesh.yaml exists to load from.
 			if _, err := os.Stat(configPath); err == nil {
@@ -90,11 +87,7 @@ var upCmd = &cobra.Command{
 					return fmt.Errorf("failed to parse %s: %w", configPath, err)
 				}
 				cmdFlag = cfg.Cmd
-				nameFlag = cfg.Name
-				if portFlag == 0 && cfg.Port > 0 {
-					portFlag = cfg.Port
-				}
-				fmt.Printf("Loaded configuration from %s (name: %s, cmd: %s)\n", configPath, nameFlag, cmdFlag)
+				fmt.Printf("Loaded configuration from %s (name: %s, domain: %s, cmd: %s)\n", configPath, nameFlag, domain, cmdFlag)
 			} else if os.IsNotExist(err) {
 				return fmt.Errorf("required flag \"cmd\" not set and no %s found (e.g. devmesh up --cmd \"pnpm dev\" --name vault)", configPath)
 			} else {
@@ -117,7 +110,18 @@ var upCmd = &cobra.Command{
 			serviceName = "app"
 		}
 
-		fmt.Printf("Starting DevMesh development service %q on port %d for command: %s\n", serviceName, port, cmdFlag)
+		// Update hosts entry and active route registry
+		hostsMgr := internal.NewHostsManager("")
+		if err := hostsMgr.AddEntry(domain, "127.0.0.1"); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update /etc/hosts for %s: %v (may require sudo privileges)\n", domain, err)
+		} else {
+			fmt.Printf("Updated /etc/hosts: %s -> 127.0.0.1\n", domain)
+		}
+		defer func() {
+			_ = hostsMgr.RemoveEntry(domain)
+		}()
+
+		fmt.Printf("Starting DevMesh development service %q on domain %s (port %d) for command: %s\n", serviceName, domain, port, cmdFlag)
 
 		mgr := process.NewManager(cmdFlag, port)
 		fmt.Printf("Process assigned PID tracker. Spawning...\n")
@@ -152,6 +156,8 @@ func parseConfigYaml(data []byte) (Config, error) {
 		switch key {
 		case "name":
 			cfg.Name = val
+		case "domain":
+			cfg.Domain = val
 		case "cmd":
 			cfg.Cmd = val
 		case "port":
@@ -166,6 +172,7 @@ func parseConfigYaml(data []byte) (Config, error) {
 func init() {
 	upCmd.Flags().StringVar(&cmdFlag, "cmd", "", "Development command to run (e.g. \"pnpm dev\")")
 	upCmd.Flags().StringVar(&nameFlag, "name", "", "Service name (e.g. \"vault\")")
+	upCmd.Flags().StringVar(&domainFlag, "domain", "", "Custom domain name (e.g. \"api.dev\")")
 	upCmd.Flags().IntVar(&portFlag, "port", 0, "Preferred port number (optional)")
 	rootCmd.AddCommand(upCmd)
 }
