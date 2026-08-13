@@ -43,6 +43,11 @@ func (m *Manager) PID() int {
 // Run spawns the command with PORT injected into the environment, forwards stdio,
 // tracks PID, and handles graceful termination on signals (Ctrl+C / SIGINT / SIGTERM).
 func (m *Manager) Run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
+	return m.RunWithCallback(ctx, stdin, stdout, stderr, nil)
+}
+
+// RunWithCallback runs the process and invokes an optional callback function once started with PID.
+func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, onStart func(pid int)) error {
 	// Determine shell execution based on OS
 	var shell, flag string
 	if runtime.GOOS == "windows" {
@@ -91,6 +96,10 @@ func (m *Manager) Run(ctx context.Context, stdin io.Reader, stdout, stderr io.Wr
 	// Start the process
 	if err := m.cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
+	}
+
+	if onStart != nil {
+		onStart(m.PID())
 	}
 
 	// Log PID / info if needed or return PID via callback / struct

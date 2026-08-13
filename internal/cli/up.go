@@ -126,10 +126,42 @@ var upCmd = &cobra.Command{
 		mgr := process.NewManager(cmdFlag, port)
 		fmt.Printf("Process assigned PID tracker. Spawning...\n")
 
+		cwd, _ := os.Getwd()
 		ctx := context.Background()
-		if err := mgr.Run(ctx, nil, os.Stdout, os.Stderr); err != nil {
+		err = mgr.RunWithCallback(ctx, nil, os.Stdout, os.Stderr, func(pid int) {
+			state := internal.ProjectState{
+				Name:      ident.Name,
+				Domain:    domain,
+				Port:      port,
+				PID:       pid,
+				Cmd:       cmdFlag,
+				Directory: cwd,
+			}
+			_ = internal.SaveProjectState(state)
+			fmt.Printf("Project %q state saved (PID: %d)\n", ident.Name, pid)
+		})
+		if err != nil {
+			state := internal.ProjectState{
+				Name:      ident.Name,
+				Domain:    domain,
+				Port:      port,
+				PID:       0,
+				Cmd:       cmdFlag,
+				Directory: cwd,
+			}
+			_ = internal.SaveProjectState(state)
 			return fmt.Errorf("process execution failed: %w", err)
 		}
+
+		state := internal.ProjectState{
+			Name:      ident.Name,
+			Domain:    domain,
+			Port:      port,
+			PID:       0,
+			Cmd:       cmdFlag,
+			Directory: cwd,
+		}
+		_ = internal.SaveProjectState(state)
 
 		return nil
 	},
