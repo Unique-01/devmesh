@@ -107,8 +107,6 @@ devmesh status   # detailed: project, domain, port, PID, status
 devmesh list      # just project + domain
 ```
 
-No `sudo` needed for either.
-
 ### 4. Stop a service
 
 ```bash
@@ -141,8 +139,8 @@ worker agent and folds the reviewed work into the codebase.
 
 ## Demo
 
-- **Live demo / video:** _not available_
-- **Repo:** https://github.com/unique-01/devmesh _(update if the repo name differs)_
+- **Live demo / video:** https://drive.google.com/file/d/1vLKQ_vTInFIsM8La3wAs4xMPSOoNLnel/view?usp=sharing
+- **Repo:** https://github.com/unique-01/devmesh 
 
 ---
 
