@@ -10,72 +10,60 @@ import (
 	"devmesh/internal"
 )
 
+// ensureProxyDaemon returns the address of a running proxy daemon.
+//
+// Binding :80 is the installed systemd service's job (sudo devmesh service
+// install); the CLI itself never elevates. If no daemon is reachable, it
+// spawns an unprivileged one on :8080 as the current user.
 func ensureProxyDaemon() (string, error) {
 	addr := "127.0.0.1:80"
-	
-	// Check if already running
-	err := internal.WaitForDaemon("http://" + addr)
-	if err == nil {
+	if internal.PingDaemon("http://" + addr) {
 		return addr, nil
 	}
 
-	// Try 8080 fallback
 	addr8080 := "127.0.0.1:8080"
-	err = internal.WaitForDaemon("http://" + addr8080)
-	if err == nil {
+	if internal.PingDaemon("http://" + addr8080) {
 		return addr8080, nil
 	}
 
-	// Acquire lock and spawn
+	// Acquire lock to avoid concurrent spawn races
 	lockPath, err := internal.NewDaemonLock()
 	if err != nil {
 		return "", err
 	}
 
-	err = internal.AcquireLock(lockPath)
-	if err != nil {
-		// Wait for existing daemon to start
-		if err := internal.WaitForDaemon("http://" + addr); err == nil {
-			return addr, nil
-		}
-		if err := internal.WaitForDaemon("http://" + addr8080); err == nil {
+	if err := internal.AcquireLock(lockPath); err != nil {
+		if internal.WaitForDaemon("http://"+addr8080) == nil {
 			return addr8080, nil
+		}
+		if internal.WaitForDaemon("http://"+addr) == nil {
+			return addr, nil
 		}
 		return "", fmt.Errorf("could not acquire lock or connect to daemon: %w", err)
 	}
 	defer internal.ReleaseLock(lockPath)
 
-	// Check if it started while we were acquiring lock
-	if err := internal.WaitForDaemon("http://" + addr); err == nil {
+	// Check if a daemon came up while we were acquiring the lock
+	if internal.PingDaemon("http://" + addr) {
 		return addr, nil
 	}
+	if internal.PingDaemon("http://" + addr8080) {
+		return addr8080, nil
+	}
 
-	// Try starting on 80
-	cmd := exec.Command(os.Args[0], "proxy", "--addr", addr)
-	
-	// Detach
-	if runtime.GOOS == "windows" {
-		// Windows detachment - rely on standard cmd start for now if needed, or omit SysProcAttr
-	} else {
+	cmd := exec.Command(os.Args[0], "proxy", "--addr", addr8080)
+	if runtime.GOOS != "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	}
-
-	// Try starting
 	if err := cmd.Start(); err != nil {
-		// Fallback to 8080
-		addr = addr8080
-		fmt.Printf("Note: Could not bind to port 80 (permission denied). Falling back to %s\n", addr)
-		cmd = exec.Command(os.Args[0], "proxy", "--addr", addr)
-		if runtime.GOOS != "windows" {
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		}
-		if err := cmd.Start(); err != nil {
-			return "", fmt.Errorf("failed to start proxy on %s: %w", addr, err)
-		}
+		return "", fmt.Errorf("failed to start proxy on %s: %w", addr8080, err)
 	}
 
-	if err := internal.WaitForDaemon("http://" + addr); err != nil {
-		return "", fmt.Errorf("failed to start proxy on %s: %w", addr, err)
+	if err := internal.WaitForDaemon("http://" + addr8080); err != nil {
+		return "", fmt.Errorf("failed to start proxy on %s: %w", addr8080, err)
 	}
-	return addr, nil
+
+	fmt.Printf("Note: no DevMesh proxy service found on :80. Spawned an unprivileged daemon on %s.\n", addr8080)
+	fmt.Printf("Tip: run 'sudo devmesh install' once to get an always-on proxy with clean port-80 URLs.\n")
+	return addr8080, nil
 }

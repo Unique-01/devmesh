@@ -8,9 +8,9 @@ import (
 	"sync"
 )
 
-// Route represents a mapping from a hostname (e.g. vault.dev or *.dev) to a target backend URL.
+// Route represents a mapping from a hostname (e.g. vault.localhost or *.localhost) to a target backend URL.
 type Route struct {
-	Host   string // e.g., vault.dev, api.dev, or wildcard like *.dev
+	Host   string // e.g., vault.localhost, api.localhost, or wildcard like *.localhost
 	Target *url.URL
 }
 
@@ -18,11 +18,11 @@ type Route struct {
 type RouteRegistry struct {
 	mu        sync.RWMutex
 	routes    map[string]*url.URL // exact host matches
-	wildcards []wildcardRoute     // wildcard matches like *.dev
+	wildcards []wildcardRoute     // wildcard matches like *.localhost
 }
 
 type wildcardRoute struct {
-	suffix string // e.g. .dev or example.com
+	suffix string // e.g. .localhost or example.com
 	target *url.URL
 }
 
@@ -79,7 +79,7 @@ func (r *RouteRegistry) RemoveRoute(host string) {
 
 // Resolve looks up a hostname and returns the target URL if found.
 func (r *RouteRegistry) Resolve(host string) (*url.URL, bool) {
-	// Strip port if present (e.g. vault.dev:8080 -> vault.dev)
+	// Strip port if present (e.g. vault.localhost:8080 -> vault.localhost)
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}

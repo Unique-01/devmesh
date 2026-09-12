@@ -6,6 +6,17 @@ import (
 	"time"
 )
 
+// PingDaemon does a single quick probe of the proxy daemon's admin endpoint.
+func PingDaemon(url string) bool {
+	client := &http.Client{Timeout: 300 * time.Millisecond}
+	resp, err := client.Get(url + "/_devmesh/ping")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 // WaitForDaemon pings the proxy until it's ready or times out.
 func WaitForDaemon(url string) error {
 	timeout := time.After(5 * time.Second)

@@ -5,11 +5,11 @@ import (
 	"sync"
 )
 
-// ActiveRouteManager manages active routes in memory and synchronizes with registry and hosts.
+// ActiveRouteManager manages active routes in memory and synchronizes with registry.
 type ActiveRouteManager struct {
 	mu       sync.RWMutex
 	registry *RouteRegistry
-	routes   map[string]string // domain -> target (e.g. vault.dev -> 127.0.0.1:43127)
+	routes   map[string]string // domain -> target (e.g. vault.localhost -> http://localhost:43127)
 }
 
 // NewActiveRouteManager creates an ActiveRouteManager.

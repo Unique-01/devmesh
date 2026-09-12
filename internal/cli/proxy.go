@@ -20,8 +20,12 @@ var (
 
 var proxyCmd = &cobra.Command{
 	Use:   "proxy",
-	Short: "Start the DevMesh reverse proxy server",
-	Long:  `Start the DevMesh reverse proxy server (default 127.0.0.1:8080) for zero-config domain routing without requiring manual port entry or /etc/hosts updates.`,
+	Short: "Run the DevMesh reverse proxy in the foreground, or manage the background proxy service",
+	Long: `Run the DevMesh reverse proxy server in the foreground (default 127.0.0.1:8080).
+
+For daily use you normally don't run this directly — 'devmesh install' sets up
+an always-on background proxy service on :80. Use the subcommands to manage
+that background service.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		registry := proxy.NewRouteRegistry()
 
@@ -30,7 +34,7 @@ var proxyCmd = &cobra.Command{
 		if err == nil {
 			for _, s := range states {
 				if s.Domain != "" && s.Port > 0 {
-					targetStr := fmt.Sprintf("http://127.0.0.1:%d", s.Port)
+					targetStr := fmt.Sprintf("http://localhost:%d", s.Port)
 					_ = registry.AddRoute(s.Domain, targetStr)
 					fmt.Printf("Loaded route from state: %s -> %s\n", s.Domain, targetStr)
 				}
@@ -43,7 +47,7 @@ var proxyCmd = &cobra.Command{
 				if cfg, err := parseConfigYaml(data); err == nil {
 					ident, _ := internal.ResolveIdentity("", "", cfg.Name, cfg.Domain)
 					if cfg.Port > 0 {
-						targetStr := fmt.Sprintf("http://127.0.0.1:%d", cfg.Port)
+						targetStr := fmt.Sprintf("http://localhost:%d", cfg.Port)
 						_ = registry.AddRoute(ident.Domain, targetStr)
 						fmt.Printf("Loaded route from .devmesh.yaml: %s -> %s\n", ident.Domain, targetStr)
 					}

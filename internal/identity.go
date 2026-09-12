@@ -10,13 +10,13 @@ import (
 // ProjectIdentity defines the name and domain for a project.
 type ProjectIdentity struct {
 	Name   string // e.g. vault
-	Domain string // e.g. vault.dev
+	Domain string // e.g. vault.localhost
 }
 
 // ResolveIdentity resolves project identity from:
 // 1. Explicit CLI flags (--name and --domain)
 // 2. Configuration file (.devmesh.yaml)
-// 3. Folder name -> project name -> project.dev
+// 3. Folder name -> project name -> project.localhost
 func ResolveIdentity(explicitName, explicitDomain, configName, configDomain string) (ProjectIdentity, error) {
 	name := explicitName
 	if name == "" {
@@ -43,13 +43,10 @@ func ResolveIdentity(explicitName, explicitDomain, configName, configDomain stri
 		domain = configDomain
 	}
 	if domain == "" {
-		// Default domain is name.local.dev
-		domain = fmt.Sprintf("%s.local.dev", name)
+		// Default domain is name.localhost
+		domain = fmt.Sprintf("%s.localhost", name)
 	} else {
-		// If domain is provided without TLD or as a short name (e.g. --domain api), ensure it has .dev or use as is if it has a dot.
-		// Wait, prompt says: --domain api.dev or --domain api?
-		// Example: --domain api.dev. If someone passes api, or api.dev. Let's support both or full domain.
-		// If domain doesn't contain a dot (e.g. "api"), we could append ".dev" or keep as is. Usually domain has a dot like api.dev.
+		// If domain is provided without TLD or as a short name (e.g. --domain api), use as provided or with .localhost.
 	}
 
 	return ProjectIdentity{

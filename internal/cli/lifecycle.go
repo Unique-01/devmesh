@@ -68,10 +68,35 @@ var listCmd = &cobra.Command{
 	},
 }
 
+// stopProjectState terminates a project's process group, deregisters its
+// proxy routes, and persists PID=0. Shared by down/stop/remove flows.
+func stopProjectState(state internal.ProjectState) {
+	if state.PID > 0 && internal.IsProcessRunning(state.PID) {
+		fmt.Printf("Stopping process group for project %q...\n", state.Name)
+		// Use negative PID to signal process group on Unix
+		if runtime.GOOS != "windows" {
+			_ = syscall.Kill(-state.PID, syscall.SIGTERM)
+		} else {
+			proc, err := os.FindProcess(state.PID)
+			if err == nil && proc != nil {
+				_ = proc.Kill()
+			}
+		}
+	}
+
+	// Deregister from running proxy if it's up
+	_ = internal.DeregisterRoute("127.0.0.1:80", state.Domain)
+	_ = internal.DeregisterRoute("127.0.0.1:8080", state.Domain)
+
+	// Update state: PID = 0, keep config and registration
+	state.PID = 0
+	_ = internal.SaveProjectState(state)
+}
+
 var downCmd = &cobra.Command{
 	Use:   "down",
 	Short: "Stop the current project development process and remove its active route",
-	Long:  `Finds the project, terminates running process, removes active route from proxy/hosts, while keeping .devmesh.yaml and state so 'devmesh up' works again.`,
+	Long:  `Finds the project, terminates running process, removes active route from proxy, while keeping .devmesh.yaml and state so 'devmesh up' works again.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		configPath := ".devmesh.yaml"
 		var configName, configDomain string
@@ -98,55 +123,119 @@ var downCmd = &cobra.Command{
 			}
 		}
 
-		// Terminate process group if PID is running
-		if state.PID > 0 && internal.IsProcessRunning(state.PID) {
-			fmt.Printf("Stopping process group for project %q...\n", ident.Name)
-			// Use negative PID to signal process group on Unix
-			if runtime.GOOS != "windows" {
-				_ = syscall.Kill(-state.PID, syscall.SIGTERM)
-			} else {
-				proc, err := os.FindProcess(state.PID)
-				if err == nil && proc != nil {
-					_ = proc.Kill()
-				}
-			}
-		}
-
-		// Remove hosts entry
-		hostsMgr := internal.NewHostsManager("")
-		_ = hostsMgr.RemoveEntry(ident.Domain)
-		fmt.Printf("Removed /etc/hosts entry for %s\n", ident.Domain)
-
-		// Deregister from running proxy if it's up
-		_ = internal.DeregisterRoute("127.0.0.1:80", ident.Domain)
-		_ = internal.DeregisterRoute("127.0.0.1:8080", ident.Domain)
-
-		// Update state: PID = 0, keep config and registration
-		state.PID = 0
-		_ = internal.SaveProjectState(state)
+		stopProjectState(state)
 
 		fmt.Printf("Project %q is now stopped. .devmesh.yaml retained.\n", ident.Name)
 		return nil
 	},
 }
 
-var restartCmd = &cobra.Command{
-	Use:   "restart",
-	Short: "Restart the project (down followed by up)",
-	Long:  `Stops the running project processes and routes, then starts it again using 'devmesh up'.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		// Run down first (ignore errors if not running)
-		_ = downCmd.RunE(downCmd, args)
+// loadNamedProjectState loads the saved state for a project by name.
+func loadNamedProjectState(name string) (internal.ProjectState, error) {
+	state, err := internal.LoadProjectState(name)
+	if err != nil {
+		return internal.ProjectState{}, fmt.Errorf("no saved project named %q (run 'devmesh status' to list saved projects)", name)
+	}
+	return state, nil
+}
 
-		// Then run up
-		return upCmd.RunE(upCmd, args)
+// runStartNamed starts a previously-run project by its saved name, from any
+// directory. It reuses the up command with the project's saved metadata.
+func runStartNamed(name string) error {
+	state, err := loadNamedProjectState(name)
+	if err != nil {
+		return err
+	}
+	if state.PID > 0 && internal.IsProcessRunning(state.PID) {
+		return fmt.Errorf("project %q is already running (PID %d). Use 'devmesh stop %s' or 'devmesh restart %s'", name, state.PID, name, name)
+	}
+	if state.Cmd == "" {
+		return fmt.Errorf("saved project %q has no command recorded", name)
+	}
+	if state.Directory == "" {
+		return fmt.Errorf("saved project %q has no working directory recorded", name)
+	}
+	if _, err := os.Stat(state.Directory); err != nil {
+		return fmt.Errorf("project directory %s no longer exists", state.Directory)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+	if err := os.Chdir(state.Directory); err != nil {
+		return fmt.Errorf("failed to enter project directory %s: %w", state.Directory, err)
+	}
+	defer os.Chdir(origDir)
+
+	fmt.Printf("Starting saved project %q from %s\n", name, state.Directory)
+
+	// Reuse the up flow with the saved identity/command.
+	cmdFlag = state.Cmd
+	nameFlag = state.Name
+	domainFlag = state.Domain
+	return upCmd.RunE(upCmd, []string{})
+}
+
+// runStopNamed stops a previously-run project by its saved name.
+func runStopNamed(name string) error {
+	state, err := loadNamedProjectState(name)
+	if err != nil {
+		return err
+	}
+	stopProjectState(state)
+	fmt.Printf("Project %q is now stopped. .devmesh.yaml retained.\n", state.Name)
+	return nil
+}
+
+var startCmd = &cobra.Command{
+	Use:   "start [name]",
+	Short: "Start a project by name from anywhere (or the current project if no name)",
+	Long: `With a name: starts a previously-run project using its saved metadata
+(working directory, command, identity) — no need to cd into the project folder.
+
+Without a name: identical to 'devmesh up' (starts the project in the current
+directory).`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return upCmd.RunE(upCmd, []string{})
+		}
+		return runStartNamed(args[0])
+	},
+}
+
+var stopCmd = &cobra.Command{
+	Use:   "stop [name]",
+	Short: "Stop a project by name from anywhere (or the current project if no name)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return downCmd.RunE(downCmd, []string{})
+		}
+		return runStopNamed(args[0])
+	},
+}
+
+var restartCmd = &cobra.Command{
+	Use:   "restart [name]",
+	Short: "Restart a project by name from anywhere (or the current project if no name)",
+	Long:  `Stops the project's running processes and routes, then starts it again.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			// Current directory: down, then up
+			_ = downCmd.RunE(downCmd, args)
+			return upCmd.RunE(upCmd, args)
+		}
+		if err := runStopNamed(args[0]); err != nil {
+			return err
+		}
+		return runStartNamed(args[0])
 	},
 }
 
 var removeCmd = &cobra.Command{
 	Use:   "remove",
-	Short: "Completely remove project (stop, clean routes/hosts, delete .devmesh.yaml)",
-	Long:  `Stops project if running, removes active route, removes hosts entry, deletes .devmesh.yaml, and deletes state after confirmation.`,
+	Short: "Completely remove project (stop, clean routes, delete .devmesh.yaml)",
+	Long:  `Stops project if running, removes active route, deletes .devmesh.yaml, and deletes state after confirmation.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		configPath := ".devmesh.yaml"
 		var configName, configDomain string
@@ -176,11 +265,7 @@ var removeCmd = &cobra.Command{
 		// 1. Stop project if running
 		_ = downCmd.RunE(downCmd, args)
 
-		// 2. Remove hosts entry
-		hostsMgr := internal.NewHostsManager("")
-		_ = hostsMgr.RemoveEntry(ident.Domain)
-
-		// 3. Deregister from running proxy
+		// 2. Deregister from running proxy
 		_ = internal.DeregisterRoute("127.0.0.1:80", ident.Domain)
 		_ = internal.DeregisterRoute("127.0.0.1:8080", ident.Domain)
 
@@ -204,6 +289,8 @@ var removeCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(startCmd)
+	rootCmd.AddCommand(stopCmd)
 	rootCmd.AddCommand(downCmd)
 	rootCmd.AddCommand(restartCmd)
 	rootCmd.AddCommand(removeCmd)

@@ -8,6 +8,7 @@ import (
 )
 
 func TestLifecycleCommands(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // isolate state writes to a temp dir
 	tmpDir := t.TempDir()
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -19,7 +20,7 @@ func TestLifecycleCommands(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	// Create .devmesh.yaml
-	configContent := "name: vault\ndomain: vault.dev\ncmd: \"echo hello\"\nport: 43127\n"
+	configContent := "name: vault\ndomain: vault.localhost\ncmd: \"echo hello\"\nport: 43127\n"
 	if err := os.WriteFile(".devmesh.yaml", []byte(configContent), 0644); err != nil {
 		t.Fatalf("failed to write config: %v", err)
 	}
@@ -27,7 +28,7 @@ func TestLifecycleCommands(t *testing.T) {
 	// Save project state
 	state := internal.ProjectState{
 		Name:      "vault",
-		Domain:    "vault.dev",
+		Domain:    "vault.localhost",
 		Port:      43127,
 		PID:       0,
 		Cmd:       "echo hello",

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -19,26 +18,17 @@ type ProjectState struct {
 	Directory string `json:"directory" yaml:"directory"`
 }
 
-// GetDevMeshDir returns the /var/lib/devmesh directory path.
-// It automatically initializes the directory if missing (only when running as root).
+// GetDevMeshDir returns the DevMesh state directory (~/.devmesh), resolved
+// from the user's home directory so it is portable across Linux, macOS, and
+// Windows and never requires elevated privileges.
 func GetDevMeshDir() (string, error) {
-	// For testing, use a local dir if not root to avoid permissions issues
-	// if os.Geteuid() != 0 {
-	// 	home, _ := os.UserHomeDir()
-	// 	return filepath.Join(home, ".devmesh"), nil
-	// }
-
-	dir := "/var/lib/devmesh"
-	statesDir := filepath.Join(dir, "states")
-	if _, err := os.Stat(statesDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(statesDir, 0755); err != nil {
-			return "", fmt.Errorf("failed to create global state dir: %w", err)
-		}
-		// Chown to SUDO_USER if available
-		sudoUser := os.Getenv("SUDO_USER")
-		if sudoUser != "" {
-			exec.Command("chown", "-R", sudoUser+":"+sudoUser, dir).Run()
-		}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve home directory: %w", err)
+	}
+	dir := filepath.Join(home, ".devmesh")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create devmesh dir: %w", err)
 	}
 	return dir, nil
 }

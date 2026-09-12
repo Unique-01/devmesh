@@ -8,7 +8,7 @@ func TestActiveRouteManager(t *testing.T) {
 	reg := NewRouteRegistry()
 	mgr := NewActiveRouteManager(reg)
 
-	domain := "vault.dev"
+	domain := "vault.localhost"
 	target := "http://127.0.0.1:43127"
 
 	if err := mgr.RegisterRoute(domain, target); err != nil {
