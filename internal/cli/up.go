@@ -35,9 +35,6 @@ var upCmd = &cobra.Command{
 	Short: "Start development command with automatic PORT assignment and proxy routing",
 	Long:  `Start development command with automatic PORT assignment (injected as PORT environment variable) and proxy routing.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if os.Getuid() == 0 {
-			return fmt.Errorf("command does not support running as root — try again without sudo")
-		}
 		configPath := ".devmesh.yaml"
 
 		// 1. If --cmd is provided, create/update .devmesh.yaml automatically.

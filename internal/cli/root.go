@@ -30,7 +30,7 @@ var rootCmd = &cobra.Command{
 			return nil
 		}
 		if os.Getuid() == 0 {
-			return fmt.Errorf("devmesh does not support running as root — try again without sudo")
+			return fmt.Errorf("command does not support running as root — try again without sudo")
 		}
 		return nil
 	},
