@@ -11,7 +11,6 @@ import (
 
 	"devmesh/internal"
 	"devmesh/internal/process"
-	"devmesh/proxy"
 
 	"github.com/spf13/cobra"
 )
@@ -36,6 +35,9 @@ var upCmd = &cobra.Command{
 	Short: "Start development command with automatic PORT assignment and proxy routing",
 	Long:  `Start development command with automatic PORT assignment (injected as PORT environment variable) and proxy routing.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if os.Getuid() == 0 {
+			return fmt.Errorf("command does not support running as root — try again without sudo")
+		}
 		configPath := ".devmesh.yaml"
 
 		// 1. If --cmd is provided, create/update .devmesh.yaml automatically.
@@ -110,7 +112,7 @@ var upCmd = &cobra.Command{
 		//     with an available port injected via PORT.
 		port := 0
 		if portFlag > 0 {
-			p, allocErr := proxy.AllocatePort(portFlag)
+			p, allocErr := process.AllocatePort(portFlag)
 			if allocErr != nil {
 				return fmt.Errorf("failed to allocate port: %w", allocErr)
 			}
@@ -202,7 +204,7 @@ var upCmd = &cobra.Command{
 			// via PORT. Apps that fall back on their own (e.g. Vite) never hit
 			// this path — their final port is picked up by detection above.
 			if errors.Is(runErr, process.ErrAddrInUse) && attempt == 1 {
-				newPort, allocErr := proxy.AllocatePort(port)
+				newPort, allocErr := process.AllocatePort(port)
 				if allocErr != nil {
 					break
 				}

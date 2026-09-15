@@ -121,6 +121,7 @@ var installCmd = &cobra.Command{
 
 After this, no command needs elevated privileges. Re-run after rebuilding
 devmesh to refresh the service binary.`,
+	Annotations: map[string]string{"allowRoot": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := systemdAvailable(); err != nil {
 			return err

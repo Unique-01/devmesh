@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -88,66 +87,6 @@ func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, 
 		env = append(env, fmt.Sprintf("PORT=%d", m.port))
 	}
 
-	// Ensure PATH includes common user binary locations
-	hasPath := false
-	for _, e := range env {
-		if strings.HasPrefix(e, "PATH=") {
-			hasPath = true
-			break
-		}
-	}
-	if !hasPath || os.Getuid() == 0 {
-		extraPaths := []string{"/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}
-		var targetHome string
-		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
-			targetHome = fmt.Sprintf("/home/%s", sudoUser)
-			if sudoUser == "root" {
-				targetHome = "/root"
-			}
-		} else {
-			if home, err := os.UserHomeDir(); err == nil && home != "" {
-				targetHome = home
-			}
-		}
-
-		if targetHome != "" {
-			extraPaths = append(extraPaths,
-				filepath.Join(targetHome, ".local/bin"),
-				filepath.Join(targetHome, ".local/share/pnpm"),
-				filepath.Join(targetHome, ".pnpm"),
-				filepath.Join(targetHome, ".npm-global/bin"),
-			)
-			nvmDir := filepath.Join(targetHome, ".nvm/versions/node")
-			if entries, err := os.ReadDir(nvmDir); err == nil {
-				for _, entry := range entries {
-					if entry.IsDir() {
-						extraPaths = append(extraPaths, filepath.Join(nvmDir, entry.Name(), "bin"))
-					}
-				}
-			}
-		}
-
-		if origPath := os.Getenv("PATH"); origPath != "" {
-			for _, p := range strings.Split(origPath, ":") {
-				if p != "" {
-					extraPaths = append(extraPaths, p)
-				}
-			}
-		}
-
-		for i, e := range env {
-			if strings.HasPrefix(e, "PATH=") {
-				existingPath := strings.TrimPrefix(e, "PATH=")
-				env[i] = fmt.Sprintf("PATH=%s:%s", strings.Join(extraPaths, ":"), existingPath)
-				hasPath = true
-				break
-			}
-		}
-		if !hasPath {
-			env = append(env, fmt.Sprintf("PATH=%s", strings.Join(extraPaths, ":")))
-		}
-	}
-
 	m.cmd.Env = env
 
 	outWriter := stdout
@@ -181,12 +120,6 @@ func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, 
 	} else {
 		m.cmd.Stdin = os.Stdin
 	}
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigChan)
-
-	errChan := make(chan error, 1)
 
 	if err := m.cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
@@ -229,36 +162,40 @@ func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, 
 		}()
 	}
 
+	exitSigChan := make(chan os.Signal, 1)
+	signal.Notify(exitSigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(exitSigChan)
+
+	errChan := make(chan error, 1)
 	go func() {
 		errChan <- m.cmd.Wait()
 	}()
 
-	var waitErr error
+	var exitErr error
 	select {
-	case sig := <-sigChan:
+	case sig := <-exitSigChan:
 		m.terminateProcess(sig)
 		<-errChan
-		waitErr = fmt.Errorf("process terminated by signal %v", sig)
+		exitErr = fmt.Errorf("process terminated by signal %v", sig)
+
 	case <-ctx.Done():
 		m.terminateProcess(syscall.SIGTERM)
 		<-errChan
-		waitErr = ctx.Err()
-	case waitErr = <-errChan:
-	}
+		exitErr = ctx.Err()
 
-	// If the child saw a bind failure on its intended port, surface it as a
-	// typed error so callers can restart with an alternative port.
-	select {
 	case <-addrInUseChan:
-		if waitErr == nil {
-			waitErr = ErrAddrInUse
+		m.terminateProcess(syscall.SIGTERM)
+		processExitErr := <-errChan
+		if processExitErr == nil {
+			exitErr = ErrAddrInUse
 		} else {
-			waitErr = fmt.Errorf("%w: %v", ErrAddrInUse, waitErr)
+			exitErr = fmt.Errorf("%w: %v", ErrAddrInUse, exitErr)
 		}
-	default:
+
+	case exitErr = <-errChan:
 	}
 
-	return waitErr
+	return exitErr
 }
 
 var (

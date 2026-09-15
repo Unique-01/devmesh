@@ -25,6 +25,15 @@ var rootCmd = &cobra.Command{
 		}
 		fmt.Println(banner)
 	},
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if _, ok := cmd.Annotations["allowRoot"]; ok {
+			return nil
+		}
+		if os.Getuid() == 0 {
+			return fmt.Errorf("devmesh does not support running as root — try again without sudo")
+		}
+		return nil
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Welcome to DevMesh CLI! Use --help to see available commands.")
 	},

@@ -31,6 +31,7 @@ var uninstallCmd = &cobra.Command{
   - ~/.devmesh saved project state (confirmation prompt unless --keep-data)
 
 Project .devmesh.yaml files in your projects are never touched.`,
+	Annotations: map[string]string{"allowRoot": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home, err := serviceHomeDir()
 		if err != nil {
