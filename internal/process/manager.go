@@ -1,7 +1,6 @@
 package process
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -9,17 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"regexp"
 	"runtime"
-	"strconv"
-	"strings"
 	"syscall"
-	"time"
 )
 
 // ErrAddrInUse is returned when the child process failed to start because the
-// port it intended to bind is already in use by another program. Callers can
-// use errors.Is to decide to restart the command with an alternative port.
+// port it intended to bind is already in use by another program.
 var ErrAddrInUse = errors.New("intended port is already in use")
 
 // Manager handles spawning, tracking, and cleaning up child processes.
@@ -81,7 +75,7 @@ func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, 
 	}
 
 	// Inject PORT only when explicitly requested. With port == 0 the child
-	// keeps its own default port (e.g. Vite on 5173).
+	// keeps its own default port.
 	env := os.Environ()
 	if m.port > 0 {
 		env = append(env, fmt.Sprintf("PORT=%d", m.port))
@@ -130,38 +124,16 @@ func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, 
 		onStart(pid)
 	}
 
-	// Discover the port the child actually bound. Primary: parse startup
-	// output (URL/port patterns). Fallback: poll listening TCP sockets of the
-	// child's whole process group (works for servers that print no URL).
-	done := make(chan struct{})
-	defer close(done)
-	if onPortDetected != nil {
-		go func() {
-			ticker := time.NewTicker(400 * time.Millisecond)
-			defer ticker.Stop()
-			timeout := time.After(30 * time.Second)
+	portDetectCtx,cancelPortDetect := context.WithCancel(ctx)
+	defer cancelPortDetect()
+	detectPort(portDetectCtx,pid, portChan, onPortDetected)
 
-			for {
-				select {
-				case <-done:
-					return
-				case <-timeout:
-					return
-				case p := <-portChan:
-					if p > 0 {
-						onPortDetected(p)
-						return
-					}
-				case <-ticker.C:
-					if p := detectPortViaSocketPoll(pid); p > 0 {
-						onPortDetected(p)
-						return
-					}
-				}
-			}
-		}()
-	}
+	exitErr := m.handleExit(ctx, addrInUseChan)
 
+	return exitErr
+}
+
+func (m *Manager) handleExit(ctx context.Context, addrInUseChan <-chan struct{}) error {
 	exitSigChan := make(chan os.Signal, 1)
 	signal.Notify(exitSigChan, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(exitSigChan)
@@ -174,22 +146,22 @@ func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, 
 	var exitErr error
 	select {
 	case sig := <-exitSigChan:
-		m.terminateProcess(sig)
+		m.terminateProcess()
 		<-errChan
 		exitErr = fmt.Errorf("process terminated by signal %v", sig)
 
 	case <-ctx.Done():
-		m.terminateProcess(syscall.SIGTERM)
+		m.terminateProcess()
 		<-errChan
 		exitErr = ctx.Err()
 
 	case <-addrInUseChan:
-		m.terminateProcess(syscall.SIGTERM)
+		m.terminateProcess()
 		processExitErr := <-errChan
 		if processExitErr == nil {
 			exitErr = ErrAddrInUse
 		} else {
-			exitErr = fmt.Errorf("%w: %v", ErrAddrInUse, exitErr)
+			exitErr = fmt.Errorf("%w: %v", ErrAddrInUse, processExitErr)
 		}
 
 	case exitErr = <-errChan:
@@ -198,88 +170,8 @@ func (m *Manager) RunWithCallback(ctx context.Context, stdin io.Reader, stdout, 
 	return exitErr
 }
 
-var (
-	reAddrInUse = regexp.MustCompile(`(?i)eaddrinuse|address already in use|only one usage of each socket address`)
-	// Lines saying a port is busy/taken are NOT the port the server bound on
-	// (e.g. Vite's "Port 5173 is in use, trying another one...").
-	reBusyPort = regexp.MustCompile(`(?i)\bin use\b|\bbusy\b|trying another|already in use`)
-	reURLPort  = regexp.MustCompile(`(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\*|\[::1\]):(\d{2,5})`)
-	rePortWord = regexp.MustCompile(`(?i)\bport["']?\s*[:=]\s*["']?(\d{2,5})\b`)
-)
-
-// scanStreamForPort scans a child's output stream for the port it bound and
-// for bind failures, delivering results on the provided channels.
-func scanStreamForPort(r io.Reader, portChan chan<- int, addrInUseChan chan<- struct{}) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if reAddrInUse.MatchString(line) {
-			select {
-			case addrInUseChan <- struct{}{}:
-			default:
-			}
-			continue
-		}
-		if reBusyPort.MatchString(line) {
-			continue
-		}
-
-		port := 0
-		if m := reURLPort.FindStringSubmatch(line); len(m) >= 2 {
-			port, _ = strconv.Atoi(m[1])
-		}
-		if port == 0 {
-			if m := rePortWord.FindStringSubmatch(line); len(m) >= 2 {
-				port, _ = strconv.Atoi(m[1])
-			}
-		}
-		if port >= 1024 && port <= 65535 {
-			select {
-			case portChan <- port:
-			default:
-			}
-		}
-	}
-}
-
-// detectPortViaSocketPoll finds a TCP port in LISTEN state owned by any
-// process in the given process group. The child runs in its own process group
-// (Setpgid), so inspecting the group covers the shell wrapper plus the actual
-// server process (e.g. sh -> pnpm -> vite), which a plain `lsof -p <pid>`
-// would miss.
-func detectPortViaSocketPoll(pgid int) int {
-	if pgid <= 0 {
-		return 0
-	}
-	out, err := exec.Command("lsof", "-a", "-iTCP", "-sTCP:LISTEN", "-P", "-n", "-g", strconv.Itoa(pgid)).Output()
-	if err != nil {
-		return 0
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "COMMAND") {
-			continue
-		}
-		line = strings.ReplaceAll(line, "(LISTEN)", "")
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		name := fields[len(fields)-1]
-		idx := strings.LastIndex(name, ":")
-		if idx == -1 {
-			continue
-		}
-		if p, err := strconv.Atoi(name[idx+1:]); err == nil && p >= 1024 && p <= 65535 {
-			return p
-		}
-	}
-	return 0
-}
-
 // terminateProcess cleanly terminates the process and its children if possible.
-func (m *Manager) terminateProcess(sig os.Signal) {
+func (m *Manager) terminateProcess() {
 	if m.cmd == nil || m.cmd.Process == nil {
 		return
 	}
