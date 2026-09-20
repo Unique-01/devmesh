@@ -39,7 +39,7 @@ func TestLifecycleCommands(t *testing.T) {
 	}
 
 	// Test status command
-	if err := statusCmd.RunE(statusCmd, []string{}); err != nil {
+	if err := psCmd.RunE(psCmd, []string{}); err != nil {
 		t.Errorf("statusCmd failed: %v", err)
 	}
 
