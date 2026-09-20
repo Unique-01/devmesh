@@ -38,22 +38,17 @@ func TestLifecycleCommands(t *testing.T) {
 		t.Fatalf("failed to save state: %v", err)
 	}
 
-	// Test list command
-	if err := listCmd.RunE(listCmd, []string{}); err != nil {
-		t.Errorf("listCmd failed: %v", err)
-	}
-
 	// Test status command
 	if err := statusCmd.RunE(statusCmd, []string{}); err != nil {
 		t.Errorf("statusCmd failed: %v", err)
 	}
 
-	// Test down command
-	if err := downCmd.RunE(downCmd, []string{}); err != nil {
-		t.Errorf("downCmd failed: %v", err)
+	// Test stop command
+	if err := stopCmd.RunE(stopCmd, []string{}); err != nil {
+		t.Errorf("stopCmd failed: %v", err)
 	}
 
-	// Verify state after down (PID should be 0)
+	// Verify state after stop (PID should be 0)
 	loaded, err := internal.LoadProjectState("vault")
 	if err != nil {
 		t.Fatalf("failed to load state: %v", err)

@@ -22,7 +22,7 @@ func AllocatePort(preferredPort int) (int, error) {
 
 	// Fallback / default when no port specified or preferred port is unavailable:
 	// Use any random unprivileged port (1024-65535)
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		randPort, err := randomUnprivilegedPort()
 		if err != nil {
 			continue

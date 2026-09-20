@@ -7,25 +7,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const banner = `░       ░░░        ░░  ░░░░  ░░  ░░░░  ░░        ░░░      ░░░  ░░░░  ░
-▒  ▒▒▒▒  ▒▒  ▒▒▒▒▒▒▒▒  ▒▒▒▒  ▒▒   ▒▒   ▒▒  ▒▒▒▒▒▒▒▒  ▒▒▒▒▒▒▒▒  ▒▒▒▒  ▒
-▓  ▓▓▓▓  ▓▓      ▓▓▓▓▓  ▓▓  ▓▓▓        ▓▓      ▓▓▓▓▓      ▓▓▓        ▓
-█  ████  ██  ██████████    ████  █  █  ██  ██████████████  ██  ████  █
-█       ███        █████  █████  ████  ██        ███      ███  ████  █
+const banner = `
+░       ░░        ░  ░░░░  ░  ░░░░  ░░        ░░      ░░  ░░░░  ░
+▒  ▒▒▒▒  ▒  ▒▒▒▒▒▒▒  ▒▒▒▒  ▒   ▒▒   ▒▒  ▒▒▒▒▒▒▒  ▒▒▒▒▒▒▒  ▒▒▒▒  ▒
+▓  ▓▓▓▓  ▓      ▓▓▓▓  ▓▓  ▓▓        ▓▓      ▓▓▓▓      ▓▓        ▓
+█  ████  █  █████████    ███  █  █  ██  █████████████  █  ████  █
+█       ██        ████  ████  ████  ██        ██      ██  ████  █
                                                                       `
 
 var rootCmd = &cobra.Command{
 	Use:   "devmesh",
 	Short: "DevMesh is a local development networking CLI that gives projects stable local domains while automatically managing their underlying ports.",
 	Long:  `DevMesh is a local development networking CLI that gives projects stable local domains while automatically managing their underlying ports.`,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		name := cmd.Name()
-		if name == "help" || name == "completion" || !isTerminal() {
-			return
-		}
-		fmt.Println(banner)
-	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if isTerminal() {
+			fmt.Println(banner)
+		}
 		if _, ok := cmd.Annotations["allowRoot"]; ok {
 			return nil
 		}

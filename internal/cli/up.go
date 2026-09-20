@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	"devmesh/internal"
 	"devmesh/internal/process"
@@ -16,18 +14,16 @@ import (
 )
 
 var (
-	cmdFlag    string
-	nameFlag   string
-	domainFlag string
-	portFlag   int
+	cmdFlag  string
+	nameFlag string
+	portFlag int
 )
 
 // Config represents the .devmesh.yaml configuration file format.
 type Config struct {
-	Name   string `yaml:"name" json:"name"`
-	Domain string `yaml:"domain" json:"domain"`
-	Cmd    string `yaml:"cmd" json:"cmd"`
-	Port   int    `yaml:"port,omitempty" json:"port,omitempty"`
+	Name string `yaml:"name" json:"name"`
+	Cmd  string `yaml:"cmd" json:"cmd"`
+	Port int    `yaml:"port,omitempty" json:"port,omitempty"`
 }
 
 var upCmd = &cobra.Command{
@@ -38,43 +34,44 @@ var upCmd = &cobra.Command{
 		configPath := ".devmesh.yaml"
 
 		// 1. If --cmd is provided, create/update .devmesh.yaml automatically.
-		var configName, configDomain string
-		if _, err := os.Stat(configPath); err == nil {
-			if data, err := os.ReadFile(configPath); err == nil {
-				if cfg, err := parseConfigYaml(data); err == nil {
-					configName = cfg.Name
-					configDomain = cfg.Domain
-					if portFlag == 0 && cfg.Port > 0 {
-						portFlag = cfg.Port
-					}
-				}
-			}
+		cfg, err := loadProjectConfig()
+
+		var configName string
+		configName = cfg.Name
+		if portFlag == 0 && cfg.Port > 0 {
+			portFlag = cfg.Port
 		}
 
-		ident, err := internal.ResolveIdentity(nameFlag, domainFlag, configName, configDomain)
+		ident, err := internal.ResolveIdentity(nameFlag, configName)
 		if err != nil {
 			return fmt.Errorf("failed to resolve identity: %w", err)
 		}
 		nameFlag = ident.Name
 		domain := ident.Domain
 
+		state, err := internal.LoadProjectState(nameFlag)
+		if err == nil {
+			if state.PID > 0 && internal.IsProcessRunning(state.PID) {
+				return fmt.Errorf(
+					"project %q is already running (PID %d). Use 'devmesh stop %s' or 'devmesh restart %s'",
+					nameFlag, state.PID, nameFlag, nameFlag,
+				)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("failed to load project state: %w", err)
+		}
+		
 		if cmdFlag != "" {
 			cfg := Config{
-				Name:   nameFlag,
-				Domain: domain,
-				Cmd:    cmdFlag,
-				Port:   portFlag,
+				Name: nameFlag,
+				Cmd:  cmdFlag,
+				Port: portFlag,
 			}
 
-			yamlContent := fmt.Sprintf("name: %s\ndomain: %s\ncmd: %q\n", cfg.Name, cfg.Domain, cfg.Cmd)
-			if cfg.Port > 0 {
-				yamlContent += fmt.Sprintf("port: %d\n", cfg.Port)
+			if err := writeConfigYaml(configPath, cfg); err != nil {
+				return err
 			}
-
-			if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
-				return fmt.Errorf("failed to write %s: %w", configPath, err)
-			}
-			fmt.Printf("Created %s configuration for project %q (domain: %s)\n", configPath, cfg.Name, cfg.Domain)
+			fmt.Printf("Created %s configuration for project %q\n", configPath, cfg.Name)
 		} else {
 			// 2. If no --cmd, check if .devmesh.yaml exists to load from.
 			if _, err := os.Stat(configPath); err == nil {
@@ -87,7 +84,7 @@ var upCmd = &cobra.Command{
 					return fmt.Errorf("failed to parse %s: %w", configPath, err)
 				}
 				cmdFlag = cfg.Cmd
-				fmt.Printf("Loaded configuration from %s (name: %s, domain: %s, cmd: %s)\n", configPath, nameFlag, domain, cmdFlag)
+				fmt.Printf("Loaded configuration from %s (name: %s, cmd: %s)\n", configPath, nameFlag, cmdFlag)
 			} else if os.IsNotExist(err) {
 				return fmt.Errorf("required flag \"cmd\" not set and no %s found (e.g. devmesh up --cmd \"pnpm dev\" --name vault)", configPath)
 			} else {
@@ -125,33 +122,19 @@ var upCmd = &cobra.Command{
 
 		registerRoute := func() {
 			if port <= 0 {
-				// Nothing to route to yet; the route is registered as soon as
-				// the app's real port is detected. Until then the proxy
-				// answers 502 for this domain instead of silently forwarding
-				// to an unrelated port.
 				return
 			}
-			// Forward via "localhost", not a hardcoded IP: the OS may map
-			// localhost to ::1 and/or 127.0.0.1, and apps (e.g. Node 17+
-			// tools like Vite) bind whichever the resolver gives them. The
-			// Go dialer tries every resolved address, covering both families.
 			if rErr := internal.RegisterRoute(proxyAddr, domain, fmt.Sprintf("http://localhost:%d", port)); rErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to register route %s -> localhost:%d: %v\n", domain, port, rErr)
 			} else {
 				fmt.Printf("Registered route: %s -> http://localhost:%d\n", domain, port)
 			}
 		}
-		registerRoute()
-
 		defer func() {
 			_ = internal.DeregisterRoute(proxyAddr, domain)
 		}()
 
 		serviceName := nameFlag
-		if serviceName == "" {
-			serviceName = "app"
-		}
-
 		portLabel := "auto-detect"
 		if port > 0 {
 			portLabel = strconv.Itoa(port)
@@ -162,34 +145,29 @@ var upCmd = &cobra.Command{
 		ctx := context.Background()
 
 		var runErr error
+		saveProjectState := func(currentPort, pid int) {
+			state := internal.ProjectState{
+				Name:      ident.Name,
+				Domain:    domain,
+				Port:      currentPort,
+				PID:       pid,
+				Cmd:       cmdFlag,
+				Directory: cwd,
+			}
+			_ = internal.SaveProjectState(state)
+		}
 		for attempt := 1; ; attempt++ {
 			mgr := process.NewManager(cmdFlag, port)
 
 			onStart := func(pid int) {
-				state := internal.ProjectState{
-					Name:      ident.Name,
-					Domain:    domain,
-					Port:      port,
-					PID:       pid,
-					Cmd:       cmdFlag,
-					Directory: cwd,
-				}
-				_ = internal.SaveProjectState(state)
+				saveProjectState(port, pid)
 				fmt.Printf("Project %q state saved (PID: %d)\n", ident.Name, pid)
 			}
 
 			onPortDetected := func(detectedPort int) {
 				port = detectedPort
 				registerRoute()
-				state := internal.ProjectState{
-					Name:      ident.Name,
-					Domain:    domain,
-					Port:      port,
-					PID:       mgr.PID(),
-					Cmd:       cmdFlag,
-					Directory: cwd,
-				}
-				_ = internal.SaveProjectState(state)
+				saveProjectState(port, mgr.PID())
 				fmt.Printf("Detected service port %d. Route active: %s -> http://localhost:%d\n", port, domain, port)
 			}
 
@@ -218,70 +196,18 @@ var upCmd = &cobra.Command{
 		}
 
 		if runErr != nil {
-			state := internal.ProjectState{
-				Name:      ident.Name,
-				Domain:    domain,
-				Port:      port,
-				PID:       0,
-				Cmd:       cmdFlag,
-				Directory: cwd,
-			}
-			_ = internal.SaveProjectState(state)
+			saveProjectState(port, 0)
 			return fmt.Errorf("process execution failed: %w", runErr)
 		}
 
-		state := internal.ProjectState{
-			Name:      ident.Name,
-			Domain:    domain,
-			Port:      port,
-			PID:       0,
-			Cmd:       cmdFlag,
-			Directory: cwd,
-		}
-		_ = internal.SaveProjectState(state)
-
+		saveProjectState(port, 0)
 		return nil
 	},
-}
-
-func parseConfigYaml(data []byte) (Config, error) {
-	var cfg Config
-	lines := string(data)
-	scanner := bufio.NewScanner(strings.NewReader(lines))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		val := strings.TrimSpace(parts[1])
-		// Remove quotes if present
-		val = strings.Trim(val, "\"'")
-
-		switch key {
-		case "name":
-			cfg.Name = val
-		case "domain":
-			cfg.Domain = val
-		case "cmd":
-			cfg.Cmd = val
-		case "port":
-			if p, err := strconv.Atoi(val); err == nil {
-				cfg.Port = p
-			}
-		}
-	}
-	return cfg, nil
 }
 
 func init() {
 	upCmd.Flags().StringVar(&cmdFlag, "cmd", "", "Development command to run (e.g. \"pnpm dev\")")
 	upCmd.Flags().StringVar(&nameFlag, "name", "", "Service name (e.g. \"vault\")")
-	upCmd.Flags().StringVar(&domainFlag, "domain", "", "Custom domain name (e.g. \"api.localhost\")")
 	upCmd.Flags().IntVar(&portFlag, "port", 0, "Preferred port number (optional)")
 	rootCmd.AddCommand(upCmd)
 }

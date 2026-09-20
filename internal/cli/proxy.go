@@ -45,7 +45,7 @@ that background service.`,
 		if _, err := os.Stat(".devmesh.yaml"); err == nil {
 			if data, err := os.ReadFile(".devmesh.yaml"); err == nil {
 				if cfg, err := parseConfigYaml(data); err == nil {
-					ident, _ := internal.ResolveIdentity("", "", cfg.Name, cfg.Domain)
+					ident, _ := internal.ResolveIdentity("", cfg.Name)
 					if cfg.Port > 0 {
 						targetStr := fmt.Sprintf("http://localhost:%d", cfg.Port)
 						_ = registry.AddRoute(ident.Domain, targetStr)

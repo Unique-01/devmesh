@@ -21,7 +21,8 @@ func (s *Server) AdminHandler(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "devmesh-proxy"})
 	case "/_devmesh/routes":
-		if r.Method == http.MethodPost {
+		switch r.Method {
+		case http.MethodPost:
 			var req struct {
 				Domain string `json:"domain"`
 				Target string `json:"target"`
@@ -35,11 +36,11 @@ func (s *Server) AdminHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			w.WriteHeader(http.StatusOK)
-		} else if r.Method == http.MethodDelete {
+		case http.MethodDelete:
 			domain := r.URL.Query().Get("domain")
 			s.registry.RemoveRoute(domain)
 			w.WriteHeader(http.StatusOK)
-		} else {
+		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	default:

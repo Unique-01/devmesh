@@ -14,10 +14,10 @@ type ProjectIdentity struct {
 }
 
 // ResolveIdentity resolves project identity from:
-// 1. Explicit CLI flags (--name and --domain)
+// 1. Explicit CLI flags (--name)
 // 2. Configuration file (.devmesh.yaml)
 // 3. Folder name -> project name -> project.localhost
-func ResolveIdentity(explicitName, explicitDomain, configName, configDomain string) (ProjectIdentity, error) {
+func ResolveIdentity(explicitName, configName string) (ProjectIdentity, error) {
 	name := explicitName
 	if name == "" {
 		name = configName
@@ -37,17 +37,8 @@ func ResolveIdentity(explicitName, explicitDomain, configName, configDomain stri
 
 	// Sanitize name for domain if needed (lowercase, replace spaces/underscores with dashes)
 	name = sanitizeProjectName(name)
-
-	domain := explicitDomain
-	if domain == "" {
-		domain = configDomain
-	}
-	if domain == "" {
-		// Default domain is name.localhost
-		domain = fmt.Sprintf("%s.localhost", name)
-	} else {
-		// If domain is provided without TLD or as a short name (e.g. --domain api), use as provided or with .localhost.
-	}
+	// Default domain is name.localhost
+	domain := fmt.Sprintf("%s.localhost", name)
 
 	return ProjectIdentity{
 		Name:   name,
