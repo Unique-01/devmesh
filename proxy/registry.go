@@ -57,6 +57,20 @@ func (r *RouteRegistry) AddRoute(host string, targetStr string) error {
 	return nil
 }
 
+// GetRoutes returns a copy of all routes as host -> target strings.
+func (r *RouteRegistry) GetRoutes() map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]string, len(r.routes)+len(r.wildcards))
+	for k, v := range r.routes {
+		result[k] = v.String()
+	}
+	for _, w := range r.wildcards {
+		result["*"+w.suffix] = w.target.String()
+	}
+	return result
+}
+
 // RemoveRoute removes a route by hostname.
 func (r *RouteRegistry) RemoveRoute(host string) {
 	host = strings.ToLower(strings.TrimSpace(host))

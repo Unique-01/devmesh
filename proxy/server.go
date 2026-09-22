@@ -22,6 +22,9 @@ func (s *Server) AdminHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "service": "devmesh-proxy"})
 	case "/_devmesh/routes":
 		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(s.registry.GetRoutes())
 		case http.MethodPost:
 			var req struct {
 				Domain string `json:"domain"`

@@ -174,9 +174,9 @@ devmesh to refresh the service binary.`,
 			return fmt.Errorf("systemctl restart %s failed: %w: %s", serviceName, err, strings.TrimSpace(string(out)))
 		}
 
-		if internal.PingDaemon("http://127.0.0.1:80") {
+		if internal.WaitForDaemon("http://127.0.0.1:80") == nil {
 			fmt.Printf("DevMesh proxy service installed, enabled, and running on http://127.0.0.1:80 (user: %s)\n", userName)
-			fmt.Println("Your apps are now reachable as http://<name>.localhost with no port suffix and no sudo for daily commands.")
+			fmt.Println("Your apps are now reachable as http://<name>.localhost.")
 		} else {
 			fmt.Println("Service installed and enabled, but the proxy is not responding on :80 yet. Recent logs:")
 			if out, jErr := exec.Command("journalctl", "-u", serviceName, "-n", "15", "--no-pager").CombinedOutput(); jErr == nil {
@@ -185,7 +185,6 @@ devmesh to refresh the service binary.`,
 				fmt.Printf("  (could not read journal: %v) Check: journalctl -u %s -n 20\n", jErr, serviceName)
 			}
 		}
-		fmt.Printf("Note: after rebuilding devmesh, re-run 'sudo devmesh install' to refresh the service binary.\n")
 		return nil
 	},
 }

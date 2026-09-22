@@ -75,31 +75,10 @@ var proxyRemoveCmd = &cobra.Command{
 	},
 }
 
-var proxyStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show the proxy service and daemon status",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := systemdAvailable(); err == nil {
-			out, err := exec.Command("systemctl", "is-active", serviceName).Output()
-			fmt.Printf("systemd unit %s: %s\n", serviceName, strings.TrimSpace(string(out)))
-			if err != nil {
-				fmt.Printf("  (not running; if installed and failing, inspect: journalctl -u %s -n 20 --no-pager)\n", serviceName)
-			}
-		}
-		if internal.PingDaemon("http://127.0.0.1:80") {
-			fmt.Println("Proxy daemon reachable on 127.0.0.1:80 — clean URLs ready (http://<app>.localhost)")
-		} else if internal.PingDaemon("http://127.0.0.1:8080") {
-			fmt.Println("Proxy daemon reachable on 127.0.0.1:8080 — URLs need :8080 until the service is installed on :80")
-		} else {
-			fmt.Println("No proxy daemon running (it will be spawned on :8080 on the next 'devmesh up')")
-		}
-		return nil
-	},
-}
+
 
 func init() {
 	proxyCmd.AddCommand(proxyStartCmd)
 	proxyCmd.AddCommand(proxyStopCmd)
 	proxyCmd.AddCommand(proxyRemoveCmd)
-	proxyCmd.AddCommand(proxyStatusCmd)
 }

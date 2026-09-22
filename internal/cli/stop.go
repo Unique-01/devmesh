@@ -40,8 +40,13 @@ func stopProjectState(state internal.ProjectState) {
 	}
 
 	// Deregister from running proxy if it's up
-	_ = internal.DeregisterRoute("127.0.0.1:80", state.Domain)
-	_ = internal.DeregisterRoute("127.0.0.1:8080", state.Domain)
+	if proxyAddr, err := findProxyDaemon(); err == nil {
+		if err := internal.DeregisterRoute(proxyAddr, state.Domain); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to deregister route %s from proxy at %s: %v\n", state.Domain, proxyAddr, err)
+		} else {
+			fmt.Printf("Deregistered route %s from proxy at %s\n", state.Domain, proxyAddr)
+		}
+	}
 
 	// Update state: PID = 0, keep config and registration
 	state.PID = 0
@@ -78,7 +83,7 @@ func runStop() error {
 func runStopNamed(name string) error {
 	state, err := internal.LoadProjectState(name)
 	if err != nil {
-		return fmt.Errorf("no saved project named %q (run 'devmesh status' to list saved projects)", name)
+		return fmt.Errorf("no saved project named %q (run 'devmesh ps' to list saved projects)", name)
 	}
 	stopProjectState(state)
 	fmt.Printf("Project %q is now stopped. .devmesh.yaml retained.\n", state.Name)

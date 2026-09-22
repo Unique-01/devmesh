@@ -30,7 +30,7 @@ directory).`,
 func runStartNamed(name string) error {
 	state, err := internal.LoadProjectState(name)
 	if err != nil {
-		return fmt.Errorf("no saved project named %q (run 'devmesh status' to list saved projects)", name)
+		return fmt.Errorf("no saved project named %q (run 'devmesh ps' to list saved projects)", name)
 	}
 	if state.PID > 0 && internal.IsProcessRunning(state.PID) {
 		return fmt.Errorf("project %q is already running (PID %d). Use 'devmesh stop %s' or 'devmesh restart %s'", name, state.PID, name, name)

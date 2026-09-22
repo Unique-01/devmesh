@@ -33,24 +33,10 @@ that background service.`,
 		states, err := internal.ListAllProjectStates()
 		if err == nil {
 			for _, s := range states {
-				if s.Domain != "" && s.Port > 0 {
+				if s.Domain != "" && s.Port > 0 && internal.IsProcessRunning(s.PID) {
 					targetStr := fmt.Sprintf("http://localhost:%d", s.Port)
 					_ = registry.AddRoute(s.Domain, targetStr)
 					fmt.Printf("Loaded route from state: %s -> %s\n", s.Domain, targetStr)
-				}
-			}
-		}
-
-		// Also check current directory .devmesh.yaml
-		if _, err := os.Stat(".devmesh.yaml"); err == nil {
-			if data, err := os.ReadFile(".devmesh.yaml"); err == nil {
-				if cfg, err := parseConfigYaml(data); err == nil {
-					ident, _ := internal.ResolveIdentity("", cfg.Name)
-					if cfg.Port > 0 {
-						targetStr := fmt.Sprintf("http://localhost:%d", cfg.Port)
-						_ = registry.AddRoute(ident.Domain, targetStr)
-						fmt.Printf("Loaded route from .devmesh.yaml: %s -> %s\n", ident.Domain, targetStr)
-					}
 				}
 			}
 		}

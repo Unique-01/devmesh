@@ -84,15 +84,15 @@ func showSingleProjectStatus(projectName string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 4, ' ', 0)
-	fmt.Fprintf(w, "%s status\n", projectName)
-	fmt.Fprintln(w, "____________________________")
+	// fmt.Fprintf(w, "%s status\n", projectName)
+	// fmt.Fprintln(w, "____________________________")
 	fmt.Fprintf(w, "Name:\t%s\n", project.Name)
 	fmt.Fprintf(w, "Domain:\t%s\n", project.Domain)
+	fmt.Fprintf(w, "Status:\t%s", statusStr)
 	fmt.Fprintf(w, "Port:\t%s\n", portStr)
 	fmt.Fprintf(w, "PID:\t%s\n", pidStr)
 	fmt.Fprintf(w, "Command:\t%s\n", project.Cmd)
 	fmt.Fprintf(w, "Directory:\t%s\n", project.Directory)
-	fmt.Fprintf(w, "Current Status:\t%s", statusStr)
 
 	w.Flush()
 	return nil
