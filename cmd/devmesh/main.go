@@ -1,7 +1,7 @@
 package main
 
 import (
-	"devmesh/internal/cli"
+	"github.com/Unique-01/devmesh/internal/cli"
 )
 
 func main() {

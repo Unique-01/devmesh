@@ -1,4 +1,4 @@
-module devmesh
+module github.com/Unique-01/devmesh
 
 go 1.26.4
 

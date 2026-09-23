@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"time"
 
-	"devmesh/internal"
-	"devmesh/proxy"
+	"github.com/Unique-01/devmesh/internal"
+	"github.com/Unique-01/devmesh/proxy"
 
 	"github.com/spf13/cobra"
 )

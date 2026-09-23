@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"devmesh/internal"
+	"github.com/Unique-01/devmesh/internal"
 )
 
 func TestLifecycleCommands(t *testing.T) {

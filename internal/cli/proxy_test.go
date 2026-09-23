@@ -4,7 +4,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"devmesh/proxy"
+	"github.com/Unique-01/devmesh/proxy"
 )
 
 func TestProxyCommandIntegration(t *testing.T) {

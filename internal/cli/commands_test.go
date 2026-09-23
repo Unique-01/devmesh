@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"devmesh/internal"
+	"github.com/Unique-01/devmesh/internal"
 )
 
 // spawnDetached starts a long-running process in its own process group (like

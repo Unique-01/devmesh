@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"devmesh/internal"
+	"github.com/Unique-01/devmesh/internal"
 
 	"github.com/spf13/cobra"
 )

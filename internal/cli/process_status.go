@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"devmesh/internal"
+	"github.com/Unique-01/devmesh/internal"
 	"fmt"
 	"os"
 	"text/tabwriter"

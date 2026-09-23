@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"syscall"
 
-	"devmesh/internal"
+	"github.com/Unique-01/devmesh/internal"
 )
 
 const (

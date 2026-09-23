@@ -7,8 +7,8 @@ import (
 	"os"
 	"strconv"
 
-	"devmesh/internal"
-	"devmesh/internal/process"
+	"github.com/Unique-01/devmesh/internal"
+	"github.com/Unique-01/devmesh/internal/process"
 
 	"github.com/spf13/cobra"
 )
